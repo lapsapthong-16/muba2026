@@ -76,6 +76,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     rule: decision.rule,
     reasons: decision.reasons,
     risk: decision.ballotRisk,
+    risk_reasons: decision.ballotReasons ?? [],
+    risk_latency_ms: decision.ballotLatencyMs ?? null,
     gonka_request_id: decision.gonkaRequestId,
     evidence: JSON.parse(row.evidence_json),
     /** The exact bytes to hand the device. Nothing rebuilds them. */

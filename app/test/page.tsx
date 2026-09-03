@@ -43,6 +43,10 @@ interface Pending {
   expires_in_seconds: number
   tx_bytes_b64: string
   state: string
+  risk: 'low' | 'medium' | 'high' | null
+  risk_reasons: string[]
+  risk_latency_ms: number | null
+  gonka_request_id: string | null
   description: {
     headline: string
     steps: string[]
@@ -341,6 +345,25 @@ export default function TestPage() {
                 ))}
               </ul>
             </div>
+            {p.risk && (
+              <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50/60 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">
+                  Risk model · Gonka Router
+                  <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] ${
+                    p.risk === 'high' ? 'bg-red-200 text-red-900'
+                    : p.risk === 'medium' ? 'bg-amber-200 text-amber-900'
+                    : 'bg-green-200 text-green-900'}`}>
+                    {p.risk}
+                  </span>
+                </p>
+                <ul className="mt-1 list-disc pl-5 text-sm text-zinc-800">
+                  {p.risk_reasons.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+                <p className="mt-1 font-mono text-[11px] text-zinc-500">
+                  MiniMax-M2.7 · {p.risk_latency_ms}ms · {p.gonka_request_id ?? 'no request id'}
+                </p>
+              </div>
+            )}
             <p className="mt-2 text-xs text-zinc-500">
               [{p.rule}] · expires in {p.expires_in_seconds}s · this address needs your device as a
               second signature; our key alone cannot move it

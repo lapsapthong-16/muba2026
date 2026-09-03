@@ -49,12 +49,27 @@ Rules:
  * agent's own words go in an <untrusted> block, never beside the evidence.
  */
 function buildUserMessage(ev: Evidence, self: string, agentIntent: string): string {
+  // Amounts go in BOTH forms. Raw base units alone made the model report 1,250,000 MIST as
+  // "1.25M SUI" — off by a billion, and confidently wrong in a way a reader would notice. The
+  // decimal string is what it should reason about; the raw value stays for exactness.
+  const human = (raw: string, coinType: string) => {
+    if (!coinType.endsWith('::sui::SUI')) return `${raw} (base units)`
+    const n = BigInt(raw)
+    const neg = n < 0n
+    const abs = neg ? -n : n
+    const d = 10n ** 9n
+    const frac = (abs % d).toString().padStart(9, '0').replace(/0+$/, '')
+    return `${neg ? '-' : ''}${abs / d}${frac ? '.' + frac : ''} SUI`
+  }
+
   const bundle = {
     wallet: self,
+    note: 'SUI has 9 decimals. Reason about the "amount" field, which is already converted.',
     balance_changes: ev.balanceChanges.map((b) => ({
       coin_type: b.coinType,
       address: b.address,
-      amount: b.amount,
+      amount: human(b.amount, b.coinType),
+      amount_base_units: b.amount,
       is_wallet: b.address === self,
     })),
     gas_used: ev.gasUsed,

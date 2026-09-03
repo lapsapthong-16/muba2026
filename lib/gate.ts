@@ -36,6 +36,9 @@ export interface GateDecision {
   /** Every reason, for the approval card. Deterministic ones first. */
   reasons: string[]
   ballotRisk: 'low' | 'medium' | 'high' | null
+  /** What the model said, kept even when a deterministic rule decided the outcome. */
+  ballotReasons: string[]
+  ballotLatencyMs: number | null
   abstained: boolean
   gonkaRequestId: string | null
 }
@@ -45,6 +48,10 @@ export function gate(sim: SimOutcome, verdict: Verdict | null, ballot: BallotOut
   const base = {
     reasons: verdict ? verdict.reasons.map((r) => r.human) : [],
     ballotRisk: ballot?.ok ? ballot.ballot.risk : null,
+    // Kept even when a deterministic rule decided, so the model's opinion is never silently
+    // discarded just because a limit fired first.
+    ballotReasons: ballot?.ok ? ballot.ballot.reasons : [],
+    ballotLatencyMs: ballot ? ballot.latencyMs : null,
     abstained: ballot ? !ballot.ok : false,
     gonkaRequestId,
   }
