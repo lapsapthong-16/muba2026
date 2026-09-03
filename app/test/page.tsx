@@ -4,10 +4,12 @@
 // transient user activation and makes TransportWebHID.request() throw SecurityError.
 import TransportWebHID from '@ledgerhq/hw-transport-webhid'
 import Sui from '@mysten/ledgerjs-hw-app-sui'
-import { toSerializedSignature } from '@mysten/sui/cryptography'
-import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519'
+import { LedgerSigner } from '@mysten/ledger-signer'
+import { SuiGrpcClient } from '@mysten/sui/grpc'
 import { useEffect, useState } from 'react'
 import { LEDGER_PATH, explainLedgerError } from '@/lib/ledger'
+
+const FULLNODE = 'https://fullnode.testnet.sui.io:443'
 
 /**
  * Ledger signing test bench. Two independent things:
@@ -114,24 +116,25 @@ export default function TestPage() {
     let transport: Awaited<ReturnType<typeof TransportWebHID.request>> | null = null
     try {
       transport = await TransportWebHID.request()
-      const app = new Sui(transport)
-      const { publicKey } = await app.getPublicKey(LEDGER_PATH, false) // silent; no prompt yet
       const bytes = b64ToBytes(p.tx_bytes_b64)
-      say(`Sending ${bytes.length} bytes to the device. Read the screen and approve.`)
 
-      const { signature } = await app.signTransaction(LEDGER_PATH, bytes)
-      say(`Device returned ${signature.length} bytes.`)
+      // Use the OFFICIAL signer rather than driving the app class by hand. It does three things
+      // that are easy to get wrong and silently fatal:
+      //   1. messageWithIntent('TransactionData', bytes) — the device signs the INTENT-PREFIXED
+      //      message, not the raw transaction. Passing raw bytes produces a signature that does
+      //      not verify AND makes the on-device parser misread the leading bytes as the intent
+      //      header, so it garbles the parse and falls back to blind signing.
+      //   2. Resolves the input objects' BCS so the device can render amounts instead of a hash.
+      //   3. toSerializedSignature, giving the flag‖sig‖pubkey form the multisig combiner needs.
+      const client = new SuiGrpcClient({ network: 'testnet', baseUrl: FULLNODE })
+      const signer = await LedgerSigner.fromDerivationPath(LEDGER_PATH, new Sui(transport), client)
 
-      // The device gives RAW bytes. combinePartialSignatures needs Sui's serialised form
-      // (flag ‖ sig(64) ‖ pubkey(32)), so wrap it unless the firmware already did.
-      const serialized =
-        signature.length === 97
-          ? bytesToB64(signature)
-          : toSerializedSignature({
-              signatureScheme: 'ED25519',
-              signature: signature.length === 64 ? signature : signature.slice(-64),
-              publicKey: new Ed25519PublicKey(publicKey.length === 33 ? publicKey.slice(1) : publicKey),
-            })
+      const onDevice = signer.getPublicKey().toSuiAddress()
+      say(`Device key: ${onDevice}`)
+      say(`Sending ${bytes.length} bytes. Read the screen and approve.`)
+
+      const { signature: serialized } = await signer.signTransaction(bytes)
+      say(`Signed. Partial is ${serialized.length} chars.`)
       say('Submitting the partial signature…')
 
       const r = await fetch(`/api/approve/${p.id}`, {
@@ -256,4 +259,3 @@ export default function TestPage() {
 
 const hex = (b: Uint8Array) => '0x' + Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('')
 const b64ToBytes = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
-const bytesToB64 = (b: Uint8Array) => btoa(String.fromCharCode(...b))

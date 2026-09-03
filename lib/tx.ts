@@ -93,11 +93,61 @@ async function buildAndFreeze(sender: string, build: Build): Promise<FrozenTx> {
   return { bytes, sha256: sha256(bytes), digest, sender, gasPaidBySponsor: false }
 }
 
-/** A bounded transfer. Works whether the wallet holds coin objects or an address balance. */
+/**
+ * Owned Coin<SUI> object ids, plus how much SUI sits in coin objects rather than in the address
+ * balance.
+ *
+ * listOwnedObjects returns objectId/version/digest/type/owner and NO balance field — an earlier
+ * version read `o.balance`, got undefined for every coin, and silently concluded the wallet had
+ * nothing spendable. getBalance splits the total into coinBalance vs addressBalance, so ask it.
+ */
+async function suiCoins(owner: string): Promise<{ ids: string[]; coinBalance: bigint }> {
+  try {
+    const [objs, bal] = await Promise.all([
+      getSuiClient().core.listOwnedObjects({ owner, type: `0x2::coin::Coin<${SUI_TYPE}>` }) as Promise<{
+        objects?: { objectId: string }[]
+      }>,
+      getSuiClient().core.getBalance({ owner, coinType: SUI_TYPE }) as Promise<{
+        balance: { coinBalance?: string }
+      }>,
+    ])
+    return {
+      ids: (objs.objects ?? []).map((o) => o.objectId),
+      coinBalance: BigInt(bal.balance.coinBalance ?? 0),
+    }
+  } catch {
+    return { ids: [], coinBalance: 0n }
+  }
+}
+
+/**
+ * A bounded transfer.
+ *
+ * SHAPE MATTERS FOR THE LEDGER. tx.coin() is the robust source — it spends an address balance or
+ * owned coins — but it expands into 0x2::coin::redeem_funds and send_funds MoveCalls, and the Sui
+ * Ledger app clear-signs only a small set of shapes. A MoveCall is not one of them, so the device
+ * falls back to blind signing a bare hash, which defeats the point of asking a human at all.
+ *
+ * So when the wallet holds coin objects we build the plain SplitCoins -> TransferObjects shape,
+ * which is what the device can actually read out. Address-balance-only wallets still work, they
+ * just blind-sign — and `npm run fund` produces coin objects precisely so escalations stay
+ * readable.
+ */
 export async function buildTransfer(sender: string, to: string, amountMist: bigint): Promise<FrozenTx> {
+  const { ids, coinBalance } = await suiCoins(sender)
+  // Only take the readable path if coin objects alone cover the amount; otherwise we would have to
+  // top up from the address balance and be back to a MoveCall anyway.
+  const clearSignable = ids.length > 0 && coinBalance >= amountMist
+
   return buildAndFreeze(sender, (tx, sponsored) => {
-    const coin = tx.coin({ balance: amountMist, type: SUI_TYPE, useGasCoin: !sponsored })
-    tx.transferObjects([coin], to)
+    if (clearSignable) {
+      const primary = tx.object(ids[0])
+      if (ids.length > 1) tx.mergeCoins(primary, ids.slice(1).map((id) => tx.object(id)))
+      const [coin] = tx.splitCoins(primary, [amountMist])
+      tx.transferObjects([coin], to)
+    } else {
+      tx.transferObjects([tx.coin({ balance: amountMist, type: SUI_TYPE, useGasCoin: !sponsored })], to)
+    }
   })
 }
 
@@ -113,12 +163,22 @@ export async function buildTransferAll(sender: string, to: string): Promise<Froz
   }
   const sponsoredAmount = balance
   const selfPaidAmount = balance - SELF_PAID_GAS_RESERVE
+  // Same clear-signing preference as buildTransfer: if every last MIST is already in coin objects
+  // we can hand the device a plain transfer. If any of it sits in the address balance we must go
+  // through tx.coin()'s MoveCalls, and the device will blind-sign.
+  const { ids, coinBalance } = await suiCoins(sender)
+  const allInCoins = ids.length > 0 && coinBalance === balance
+
   return buildAndFreeze(sender, (tx, sponsored) => {
-    const coin = tx.coin({
-      balance: sponsored ? sponsoredAmount : selfPaidAmount,
-      type: SUI_TYPE,
-      useGasCoin: !sponsored,
-    })
-    tx.transferObjects([coin], to)
+    if (allInCoins && sponsored) {
+      const primary = tx.object(ids[0])
+      if (ids.length > 1) tx.mergeCoins(primary, ids.slice(1).map((id) => tx.object(id)))
+      tx.transferObjects([primary], to)
+      return
+    }
+    tx.transferObjects(
+      [tx.coin({ balance: sponsored ? sponsoredAmount : selfPaidAmount, type: SUI_TYPE, useGasCoin: !sponsored })],
+      to
+    )
   })
 }
