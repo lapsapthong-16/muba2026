@@ -60,6 +60,11 @@ export interface GonkaCallOptions {
   temperature?: number
   maxTokens?: number
   client?: OpenAI
+  /** Caller-owned deadline. The gateway's own timeout is ~125s — longer than an MCP client's 60s. */
+  signal?: AbortSignal
+  /** Saturation retries. Default 5; pass 1 on any path a human is waiting on. */
+  attempts?: number
+  responseFormat?: OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']
 }
 
 export interface GonkaCallResult {
@@ -130,15 +135,21 @@ export async function callGonka(options: GonkaCallOptions): Promise<GonkaCallRes
   }
 
   // .withResponse() so the X-Request-Id header survives — a bare create() throws it away.
-  const { data: response, response: httpResponse } = await withSaturationRetry(() =>
-    client.chat.completions
-      .create({
-        model: modelId,
-        messages,
-        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-        ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      })
-      .withResponse()
+  const { data: response, response: httpResponse } = await withSaturationRetry(
+    () =>
+      client.chat.completions
+        .create(
+          {
+            model: modelId,
+            messages,
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+            ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
+          },
+          options.signal ? { signal: options.signal } : undefined
+        )
+        .withResponse(),
+    options.attempts ?? 5
   )
 
   return {
@@ -150,6 +161,53 @@ export async function callGonka(options: GonkaCallOptions): Promise<GonkaCallRes
     usage: response.usage,
     raw: response,
   }
+}
+
+/**
+ * MiniMax emits <think>…</think> before its JSON and `response_format: json_object` does NOT
+ * suppress it, so a naive JSON.parse rejects 100% of its ballots — which makes every transaction
+ * abstain, and every abstention escalates. Salvage in this order, verified against real output.
+ */
+export function salvageJson<T = unknown>(raw: string | null | undefined): T | null {
+  if (!raw) return null
+  let s = raw.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  s = s.replace(/<think>[\s\S]*/i, '') // unterminated think block (truncated by max_tokens)
+  s = s.replace(/```(?:json)?/gi, '')
+  try {
+    return JSON.parse(s.trim()) as T
+  } catch {
+    /* fall through to brace scanning */
+  }
+  // The LAST balanced {...}, scanned from the end: reasoning often contains earlier braces.
+  let depth = 0
+  let end = -1
+  for (let i = s.length - 1; i >= 0; i--) {
+    const c = s[i]
+    if (c === '}') {
+      if (depth === 0) end = i
+      depth++
+    } else if (c === '{') {
+      depth--
+      if (depth === 0 && end !== -1) {
+        try {
+          return JSON.parse(s.slice(i, end + 1)) as T
+        } catch {
+          end = -1
+        }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * The gateway can silently serve a DIFFERENT model than the one requested. Three "independent"
+ * opinions could be one model answering three times, and zero spread would read as agreement.
+ * A substituted ballot is an abstention, never a vote.
+ */
+export function wasSubstituted(result: GonkaCallResult): boolean {
+  if (result.fallback) return true
+  return !!result.modelServed && result.modelServed !== result.model
 }
 
 export type ModelMethodOptions = Omit<GonkaCallOptions, 'model'>
