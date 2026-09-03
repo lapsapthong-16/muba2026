@@ -15,8 +15,8 @@ const overCap: Verdict = { ...clean, verdict: 'deny', reasons: [{ rule: 'WEEKLY_
 const unknownTo: Verdict = { ...clean, verdict: 'require_approval', reasons: [{ rule: 'UNKNOWN_RECIPIENT', verdict: 'require_approval', human: 'unknown recipient' }] }
 const capGrab: Verdict = { ...clean, verdict: 'deny', reasons: [{ rule: 'CAPABILITY_TRANSFER', verdict: 'deny', human: 'hands over a permission object' }] }
 
-const low: BallotOutcome = { ok: true, ballot: { risk: 'low', reasons: [], signals: [] }, requestId: 'req-1', model: 'm', latencyMs: 10 }
-const high: BallotOutcome = { ok: true, ballot: { risk: 'high', reasons: ['drains the wallet'], signals: [] }, requestId: 'req-2', model: 'm', latencyMs: 10 }
+const low: BallotOutcome = { ok: true, ballot: { risk: 'low', score: 10, reasons: [], signals: [] }, requestId: 'req-1', model: 'm', latencyMs: 10 }
+const high: BallotOutcome = { ok: true, ballot: { risk: 'high', score: 92, reasons: ['drains the wallet'], signals: [] }, requestId: 'req-2', model: 'm', latencyMs: 10 }
 const abstain: BallotOutcome = { ok: false, abstainReason: 'timeout', requestId: null, latencyMs: 30000 }
 
 type Row = [string, SimOutcome, Verdict | null, BallotOutcome | null, string]

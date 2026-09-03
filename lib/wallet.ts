@@ -208,7 +208,7 @@ export async function submitTransfer(
     return {
       outcome: 'awaiting_approval', funds_moved: false, approval_id: id, rule: decision.rule,
       reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
-      risk: decision2.ballotRisk, risk_reasons: decision2.ballotReasons,
+      risk: decision2.ballotRisk, risk_score: decision2.ballotScore, risk_reasons: decision2.ballotReasons,
       gonka_request_id: decision2.gonkaRequestId,
       from: w.m_address,
       note: 'NOTHING HAS BEEN SENT. This was re-issued from the protected address, which needs the owner\'s Ledger as a second signature — our key alone cannot move it. Poll wallet_approval_status. Do not retry: a retry creates a second pending approval, it does not bypass this one.',
@@ -237,7 +237,7 @@ export async function submitTransfer(
   getDb().prepare('UPDATE decisions SET digest=? WHERE id=?').run(exec.digest, id)
   return {
     outcome: 'executed', funds_moved: true, digest: exec.digest, rule: decision.rule,
-    risk: decision.ballotRisk, risk_reasons: decision.ballotReasons,
+    risk: decision.ballotRisk, risk_score: decision.ballotScore, risk_reasons: decision.ballotReasons,
     risk_latency_ms: decision.ballotLatencyMs, gonka_request_id: decision.gonkaRequestId,
     explorer: `https://suiscan.xyz/testnet/tx/${exec.digest}`,
     note: "Signed and submitted within the owner's limits.",

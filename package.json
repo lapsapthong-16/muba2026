@@ -14,7 +14,9 @@
     "test": "npm run test:gate && npm run test:policy",
     "fund": "tsx --env-file=.env scripts/fund.mts",
     "onboard": "tsx --env-file=.env scripts/onboard.mts",
-    "demo": "tsx --env-file=.env scripts/demo.mts"
+    "demo": "tsx --env-file=.env scripts/demo.mts",
+    "check": "tsx --env-file=.env scripts/check.mts",
+    "flow": "bash scripts/flow.sh"
   },
   "dependencies": {
     "@ledgerhq/hw-transport-web-ble": "^6.35.0",

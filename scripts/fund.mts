@@ -34,8 +34,10 @@ console.log(`from    : ${from}`)
 const before = await getBalance(from)
 console.log(`balance : ${Number(before) / 1e9} SUI`)
 
-// Keep a gas reserve so this wallet stays usable for the next top-up.
-const RESERVE = 20_000_000n
+// Keep a gas reserve so this wallet stays usable for the next top-up. A transfer costs about
+// 2,000,000 MIST, so 5,000,000 is two transfers of headroom — 20,000,000 was ten times what is
+// needed and made the funder look empty while it still held plenty.
+const RESERVE = 5_000_000n
 if (before < amountMist + RESERVE) {
   console.error(
     `\nNot enough. Need ${Number(amountMist + RESERVE) / 1e9} SUI (${amountSui} + 0.02 gas reserve), have ${Number(before) / 1e9}.`

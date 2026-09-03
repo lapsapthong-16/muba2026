@@ -44,6 +44,7 @@ interface Pending {
   tx_bytes_b64: string
   state: string
   risk: 'low' | 'medium' | 'high' | null
+  risk_score: number | null
   risk_reasons: string[]
   risk_latency_ms: number | null
   gonka_request_id: string | null
@@ -348,7 +349,7 @@ export default function TestPage() {
             {p.risk && (
               <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50/60 p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">
-                  Risk model · Gonka Router
+                  Risk score {p.risk_score ?? '—'}/100 · Gonka Router
                   <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] ${
                     p.risk === 'high' ? 'bg-red-200 text-red-900'
                     : p.risk === 'medium' ? 'bg-amber-200 text-amber-900'

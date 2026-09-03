@@ -36,6 +36,8 @@ export interface GateDecision {
   /** Every reason, for the approval card. Deterministic ones first. */
   reasons: string[]
   ballotRisk: 'low' | 'medium' | 'high' | null
+  /** 0-100 from the model. The band above is derived from it by published thresholds. */
+  ballotScore: number | null
   /** What the model said, kept even when a deterministic rule decided the outcome. */
   ballotReasons: string[]
   ballotLatencyMs: number | null
@@ -48,6 +50,7 @@ export function gate(sim: SimOutcome, verdict: Verdict | null, ballot: BallotOut
   const base = {
     reasons: verdict ? verdict.reasons.map((r) => r.human) : [],
     ballotRisk: ballot?.ok ? ballot.ballot.risk : null,
+    ballotScore: ballot?.ok ? ballot.ballot.score : null,
     // Kept even when a deterministic rule decided, so the model's opinion is never silently
     // discarded just because a limit fired first.
     ballotReasons: ballot?.ok ? ballot.ballot.reasons : [],
