@@ -7,17 +7,28 @@
     "build": "next build",
     "start": "next start",
     "gonka": "tsx --env-file=.env scripts/call-gonka.ts",
-    "lint": "eslint"
+    "lint": "eslint",
+    "pipeline": "tsx --env-file-if-exists=.env scripts/pipeline.mts",
+    "test:policy": "tsx lib/policy/policy.test.ts",
+    "test:gate": "tsx lib/gate.test.ts",
+    "test": "npm run test:gate && npm run test:policy"
   },
   "dependencies": {
+    "@ledgerhq/hw-transport-webhid": "^6.36.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@mysten/deepbook-v3": "^2.1.4",
+    "@mysten/ledger-signer": "^0.2.22",
+    "@mysten/ledgerjs-hw-app-sui": "^0.9.1",
+    "@mysten/sui": "^2.29.0",
     "next": "16.3.4",
     "openai": "^7.9.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24.13.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
