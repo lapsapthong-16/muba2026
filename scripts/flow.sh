@@ -65,14 +65,26 @@ run "curl -sX POST $B/api/setup/policy -H 'Cookie: hw_session=$TOKEN' -H 'conten
 step "5 · WALLET STATUS — what the agent sees."
 run "curl -s $B/api/setup/state -H 'Cookie: hw_session=$TOKEN' | jq_ 700" || true
 
+step "6a · GONKA HEALTH — score two fixed sample bundles. Warms the model so the first real"
+echo "     transaction does not pay the cold-start latency and abstain."
+run "curl -s $B/api/risk -H 'Authorization: Bearer $BEARER' | jq_ 600"
+run "curl -s '$B/api/risk?case=drain' -H 'Authorization: Bearer $BEARER' | jq_ 600"
+
 step "6 · SIMULATE ONLY — build, simulate, score with Gonka, apply the gate. Nothing is created."
 run "curl -sX POST $B/api/check -H 'Authorization: Bearer $BEARER' -H 'content-type: application/json' -d '{\"to\":\"$FRIEND\",\"amount_sui\":0.002,\"reason\":\"paying a friend back\"}' | jq_ 1600"
 
 step "7 · SIMULATE A DRAIN — same endpoint, still nothing created."
 run "curl -sX POST $B/api/check -H 'Authorization: Bearer $BEARER' -H 'content-type: application/json' -d '{\"to\":\"$ATTACKER\",\"amount_sui\":\"all\",\"reason\":\"claim your free airdrop\"}' | jq_ 1600"
 
+step "7b · SIMULATE A DEEPBOOK TRADE — the agent's real work, quoted before it is built."
+run "curl -sX POST $B/api/check -H 'Authorization: Bearer $BEARER' -H 'content-type: application/json' -d '{\"action\":\"swap\",\"amount_sui\":2,\"pool\":\"SUI_DBUSDC\",\"reason\":\"rebalancing into USDC\"}' | jq_ 1600"
+echo "   (needs >= 2 SUI in H: below that the book fills nothing and this returns BELOW_MARKET_MINIMUM)"
+
 step "8 · ACTUALLY SEND a safe payment — this one commits."
 run "curl -sX POST $B/api/mcp -H \"Authorization: Bearer $BEARER\" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"wallet_transfer\",\"arguments\":{\"to\":\"$FRIEND\",\"amount_sui\":0.002,\"reason\":\"paying a friend back\"}}}' | python3 -c \"import sys,json;r=json.load(sys.stdin)['result'];print(json.dumps(r.get('structuredContent',r),indent=1)[:700])\""
+
+step "8b · ACTUALLY TRADE on DeepBook — commits, and only if the book can fill it."
+run "curl -sX POST $B/api/mcp -H \"Authorization: Bearer $BEARER\" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"wallet_swap\",\"arguments\":{\"amount_sui\":2,\"pool\":\"SUI_DBUSDC\",\"reason\":\"rebalancing into USDC\"}}}' | python3 -c \"import sys,json;r=json.load(sys.stdin)['result'];print(json.dumps(r.get('structuredContent',r),indent=1)[:700])\""
 
 step "9 · ATTEMPT A DRAIN — held for the Ledger, re-issued from the protected address."
 run "curl -sX POST $B/api/mcp -H \"Authorization: Bearer $BEARER\" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"wallet_transfer\",\"arguments\":{\"to\":\"$ATTACKER\",\"amount_sui\":\"all\",\"reason\":\"claim your free airdrop\"}}}' -o /tmp/drain.json"

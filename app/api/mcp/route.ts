@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
 import { requireAgent, AuthError } from '@/lib/auth'
-import { getWallet, walletStatus, submitTransfer, approvalStatus } from '@/lib/wallet'
+import { getWallet, walletStatus, submitTransfer, submitSwap, approvalStatus } from '@/lib/wallet'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -14,7 +14,7 @@ export const maxDuration = 60
  * Stateless (no sessionIdGenerator): every call re-authenticates from the bearer, so an agent
  * restart costs nothing and there is no session table to get out of sync with the account table.
  *
- * FOUR tools, and the list IS the capability surface. Note what is absent: no tool writes policy,
+ * FIVE tools, and the list IS the capability surface. Note what is absent: no tool writes policy,
  * no tool approves an approval, and there is no `network` parameter anywhere — a field that does
  * not exist in the schema cannot be prompt-injected or defaulted wrong.
  *
@@ -31,8 +31,10 @@ function buildServer(accountId: string): McpServer {
     {
       title: 'Wallet status',
       description:
-        'Address, balance, configured guardrails, and any pending approvals. Call this first. ' +
-        'If it returns needs_setup, show the setup_url to the human and stop — you cannot proceed without them.',
+        'START HERE. Address, balance, configured guardrails and any pending approvals. ' +
+        'If it returns needs_setup, show the setup_url to the human and STOP — you cannot set the ' +
+        'wallet up for them. Read the guardrails before planning any spend: staying inside them is ' +
+        'the difference between a payment that settles and one that waits on a hardware key.',
       inputSchema: {},
     },
     async () => text(await walletStatus(accountId))
@@ -43,9 +45,11 @@ function buildServer(accountId: string): McpServer {
     {
       title: 'Send SUI',
       description:
-        'Send SUI to an address. The transaction is simulated and checked against the owner\'s ' +
-        'guardrails before anything is signed. May return awaiting_approval, in which case NOTHING ' +
-        'has been sent and you must poll wallet_approval_status.',
+        'Send SUI to an address. COMMITS: on success the money is gone. The transaction is ' +
+        'simulated and checked against the owner\'s guardrails first, so it may return ' +
+        'awaiting_approval — in which case NOTHING has been sent and you must poll ' +
+        'wallet_approval_status. If you only want to know whether something WOULD be allowed, do ' +
+        'not call this; there is no dry-run flag here.',
       inputSchema: {
         to: z.string().describe('Recipient Sui address, 0x-prefixed'),
         amount_sui: z
@@ -58,12 +62,33 @@ function buildServer(accountId: string): McpServer {
   )
 
   server.registerTool(
+    'wallet_swap',
+    {
+      title: 'Trade on DeepBook',
+      description:
+        'Swap SUI for another asset on DeepBook. COMMITS. Quoted first, and refused outright if ' +
+        'the order book cannot fill the size — this book needs roughly 2 SUI. The slippage floor ' +
+        'is set by the wallet, not by you. Same guardrails and same risk check as a transfer; a ' +
+        'trade usually scores lower than a payment because the value comes back in the same ' +
+        'transaction.',
+      inputSchema: {
+        amount_sui: z.number().positive().describe('How much SUI to sell'),
+        pool: z.string().optional().describe('Pool key, default SUI_DBUSDC'),
+        reason: z.string().max(400).describe('Why you are trading, in one sentence, for the owner to read'),
+      },
+    },
+    async (args) => text(await submitSwap(accountId, args as never))
+  )
+
+  server.registerTool(
     'wallet_approval_status',
     {
       title: 'Check a pending approval',
       description:
-        'Poll a decision returned by wallet_transfer. Blocks briefly while waiting for the human. ' +
-        'Terminal states are executed, denied and expired.',
+        'Poll a decision returned by wallet_transfer or wallet_swap. Blocks briefly while waiting ' +
+        'for the human, so call it in a loop rather than spinning. Terminal states are executed, ' +
+        'denied and expired — anything else means the human has not answered yet and NOTHING has ' +
+        'been sent. Approvals expire 30 minutes after they are raised.',
       inputSchema: {
         approval_id: z.string(),
         wait_ms: z.number().int().min(0).max(45_000).optional().describe('Long-poll budget, default 25000'),

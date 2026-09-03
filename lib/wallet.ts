@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getDb } from './db'
 import { getBalance, SUI_TYPE, SUI_DECIMALS } from './sui'
-import { buildTransfer, buildTransferAll, type FrozenTx } from './tx'
+import { buildTransfer, buildTransferAll, buildSwap, quoteSwap, type FrozenTx } from './tx'
 import { executeFromSpending, recordSpend } from './execute'
 import { simulate } from './evidence'
 import { PolicySchema, evaluate, type Policy } from './policy/policy'
@@ -292,5 +292,91 @@ export async function approvalStatus(
         note: 'Still waiting for the owner. Call again to keep waiting. Nothing has been sent.' }
     }
     await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+
+
+/**
+ * A DeepBook swap — the agent doing real work rather than just moving money out.
+ *
+ * Runs the identical pipeline as a transfer: build, simulate, score, gate. The interesting part is
+ * that a swap SHOULD look different to the risk engine — value leaves and value returns inside one
+ * transaction — where a drain has an outflow and nothing coming back. That contrast is the whole
+ * argument for scoring effects rather than intentions.
+ */
+export async function submitSwap(
+  accountId: string,
+  args: { pool?: string; amount_sui: number; reason: string }
+): Promise<Record<string, unknown>> {
+  const w = await getWallet(accountId)
+  const policy = loadPolicy(w)
+  if (!policy || !w.h_address) return walletStatus(accountId)
+
+  const pool = args.pool ?? 'SUI_DBUSDC'
+
+  // Quote FIRST. Measured live, this book returns zero output below 2 SUI even though its stated
+  // minSize is 1 — building a swap the book cannot fill wastes gas and produces a transaction the
+  // agent cannot learn anything from.
+  let quote
+  try {
+    quote = await quoteSwap(pool, args.amount_sui)
+  } catch (e) {
+    return { outcome: 'blocked', funds_moved: false, rule: 'QUOTE_FAILED',
+      reasons: [e instanceof Error ? e.message.split('\n')[0].slice(0, 160) : String(e)] }
+  }
+  if (!quote.quoteOut || quote.quoteOut <= 0) {
+    return {
+      outcome: 'blocked', funds_moved: false, rule: 'BELOW_MARKET_MINIMUM',
+      reasons: [`Swapping ${args.amount_sui} SUI on ${pool} returns nothing — the order book has no fill at that size.`],
+      hint: 'This book needs about 2 SUI to fill. Ask the owner to fund the wallet, or trade more.',
+    }
+  }
+
+  const minOut = quote.quoteOut * 0.99 // 1% slippage floor, set by us and never by the agent
+  const intent = `swap ${args.amount_sui} SUI on ${pool} for >= ${minOut.toFixed(4)}`
+
+  let frozen: FrozenTx
+  try {
+    frozen = await buildSwap(w.h_address, pool, args.amount_sui, minOut)
+  } catch (e) {
+    return { outcome: 'blocked', funds_moved: false, rule: 'BUILD_FAILED',
+      reasons: [e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e)] }
+  }
+
+  const sim = await simulate(frozen.bytes, w.h_address)
+  const verdict = sim.kind === 'ok' ? evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct)) : null
+  const ballot = sim.kind === 'ok' && verdict
+    ? await requestBallot(sim.evidence, w.h_address, args.reason, ESCALATION_BUDGET_MS)
+    : null
+  const decision = gate(sim, verdict, ballot)
+
+  if (decision.outcome !== 'allow') {
+    const id = record(accountId, frozen, decision, sim, intent, w,
+      decision.outcome === 'blocked' ? 'blocked' : 'pending')
+    return {
+      outcome: decision.outcome === 'blocked' ? 'blocked' : 'awaiting_approval',
+      funds_moved: false, rule: decision.rule, reasons: decision.reasons,
+      ...(decision.outcome === 'needs_ledger' ? { approval_id: id } : {}),
+      quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
+      risk: decision.ballotRisk, risk_score: decision.ballotScore,
+      note: 'Nothing was swapped.',
+    }
+  }
+
+  try {
+    const exec = await executeFromSpending(accountId, frozen)
+    for (const o of verdict!.outflows) recordSpend(accountId, o.coinType, o.principal, exec.digest)
+    const id = record(accountId, frozen, decision, sim, intent, w, 'executed')
+    getDb().prepare('UPDATE decisions SET digest=? WHERE id=?').run(exec.digest, id)
+    return {
+      outcome: 'executed', funds_moved: true, digest: exec.digest,
+      explorer: `https://suiscan.xyz/testnet/tx/${exec.digest}`,
+      quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
+      risk: decision.ballotRisk, risk_score: decision.ballotScore,
+      gonka_request_id: decision.gonkaRequestId,
+    }
+  } catch (e) {
+    return { outcome: 'blocked', funds_moved: false, rule: 'EXECUTION_FAILED',
+      reasons: [e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e)] }
   }
 }

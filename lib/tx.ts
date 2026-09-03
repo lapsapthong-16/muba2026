@@ -182,3 +182,49 @@ export async function buildTransferAll(sender: string, to: string): Promise<Froz
     )
   })
 }
+
+/**
+ * A DeepBook swap — the agent's "real work" action, and the safe half of the demo.
+ *
+ * Sponsorable without special handling: DeepBook sources its input with coinWithBalance, the same
+ * primitive tx.coin() uses, so it never touches tx.gas and the sponsor's coin is left alone.
+ *
+ * The three coins the swap returns MUST be transferred back. SUI has no implicit drop for Coin, so
+ * a PTB that leaves them unconsumed does not type-check — and transferring them to the sender is
+ * also what makes the trade legible to the risk engine: value leaves and value returns, in the same
+ * transaction, which is exactly the shape a plain drain does not have.
+ *
+ * NOTE ON SIZE. The SUI_DBUSDC book has minSize 1 and lotSize 0.1, but measured live it returns
+ * quoteOut 0 for anything under 2 SUI — below that the order matches nothing and the swap is
+ * pointless. Quote before building and refuse a zero-output trade rather than signing one.
+ */
+export async function buildSwap(
+  sender: string,
+  poolKey: string,
+  amount: number,
+  minOut: number
+): Promise<FrozenTx> {
+  const { DeepBookClient } = await import('@mysten/deepbook-v3')
+  return buildAndFreeze(sender, (tx) => {
+    const db = new DeepBookClient({
+      address: sender,
+      network: 'testnet',
+      client: getSuiClient() as never,
+    })
+    const [baseOut, quoteOut, deepOut] = tx.add(
+      db.deepBook.swapExactBaseForQuote({ poolKey, amount, deepAmount: 0, minOut })
+    )
+    // Everything the pool hands back goes to the wallet. Leaving any of it unconsumed is a
+    // compile error, not a silent leak — Move's ability system will not let the PTB close.
+    tx.transferObjects([baseOut, quoteOut, deepOut], sender)
+  })
+}
+
+/** Live quote, so we never build a swap the book cannot fill. */
+export async function quoteSwap(poolKey: string, amount: number) {
+  const { DeepBookClient } = await import('@mysten/deepbook-v3')
+  const db = new DeepBookClient({ address: '0x0', network: 'testnet', client: getSuiClient() as never })
+  return (db as unknown as {
+    getQuoteQuantityOutInputFee(p: string, a: number): Promise<{ quoteOut: number; deepRequired: number }>
+  }).getQuoteQuantityOutInputFee(poolKey, amount)
+}

@@ -1,7 +1,7 @@
 import { requireAgent, AuthError } from '@/lib/auth'
 import { getWallet } from '@/lib/wallet'
 import { getDb, spentLast7d } from '@/lib/db'
-import { buildTransfer, buildTransferAll } from '@/lib/tx'
+import { buildTransfer, buildTransferAll, buildSwap, quoteSwap } from '@/lib/tx'
 import { simulate } from '@/lib/evidence'
 import { PolicySchema, evaluate } from '@/lib/policy/policy'
 import { requestBallot, RISK_BANDS } from '@/lib/ballot'
@@ -32,10 +32,17 @@ export async function POST(req: Request) {
   }
 
   const body = (await req.json().catch(() => null)) as
-    | { to?: string; amount_sui?: number | 'all'; reason?: string }
+    | { action?: 'transfer' | 'swap'; to?: string; pool?: string; amount_sui?: number | 'all'; reason?: string }
     | null
-  if (!body?.to || body.amount_sui === undefined) {
-    return Response.json({ error: 'to and amount_sui are required.' }, { status: 400 })
+  const action = body?.action ?? 'transfer'
+  if (body?.amount_sui === undefined) {
+    return Response.json({ error: 'amount_sui is required.' }, { status: 400 })
+  }
+  if (action === 'transfer' && !body.to) {
+    return Response.json({ error: 'to is required for a transfer.' }, { status: 400 })
+  }
+  if (action === 'swap' && body.amount_sui === 'all') {
+    return Response.json({ error: 'A swap needs a concrete size; "all" is transfer-only.' }, { status: 400 })
   }
 
   const w = await getWallet(accountId)
@@ -44,12 +51,35 @@ export async function POST(req: Request) {
   }
   const policy = PolicySchema.parse(JSON.parse(w.policy_json))
 
+  // A swap is quoted before it is built, exactly as wallet_swap does it, so a dry run tells you the
+  // same "the book cannot fill this" you would get from the committing path — without spending gas
+  // to find out.
+  const pool = body!.pool ?? 'SUI_DBUSDC'
+  let quote: { quoteOut: number } | undefined
+  if (action === 'swap') {
+    try {
+      quote = await quoteSwap(pool, Number(body!.amount_sui))
+    } catch (e) {
+      return Response.json({ would: 'blocked', stage: 'quote', nothing_happened: true,
+        reasons: [e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e)] })
+    }
+    if (!quote.quoteOut || quote.quoteOut <= 0) {
+      return Response.json({
+        would: 'blocked', stage: 'quote', rule: 'BELOW_MARKET_MINIMUM', nothing_happened: true,
+        reasons: [`Swapping ${body!.amount_sui} SUI on ${pool} returns nothing — the order book has no fill at that size.`],
+        hint: 'This book needs about 2 SUI to fill.',
+      })
+    }
+  }
+
   let frozen
   try {
     frozen =
-      body.amount_sui === 'all'
-        ? await buildTransferAll(w.h_address, body.to)
-        : await buildTransfer(w.h_address, body.to, BigInt(Math.round(Number(body.amount_sui) * 10 ** SUI_DECIMALS)))
+      action === 'swap'
+        ? await buildSwap(w.h_address, pool, Number(body!.amount_sui), quote!.quoteOut * 0.99)
+        : body!.amount_sui === 'all'
+          ? await buildTransferAll(w.h_address, body!.to!)
+          : await buildTransfer(w.h_address, body!.to!, BigInt(Math.round(Number(body!.amount_sui) * 10 ** SUI_DECIMALS)))
   } catch (e) {
     return Response.json({
       would: 'blocked',
@@ -69,7 +99,7 @@ export async function POST(req: Request) {
   }
 
   const verdict = evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct))
-  const ballot = await requestBallot(sim.evidence, w.h_address, body.reason ?? '', 30_000)
+  const ballot = await requestBallot(sim.evidence, w.h_address, body!.reason ?? '', 30_000)
   const decision = gate(sim, verdict, ballot)
 
   const sui = (raw: string) => (Number(raw) / 10 ** SUI_DECIMALS).toFixed(6).replace(/\.?0+$/, '')
@@ -79,6 +109,10 @@ export async function POST(req: Request) {
     rule: decision.rule,
     reasons: decision.reasons,
     nothing_happened: true,
+    action,
+    ...(quote
+      ? { quote: { pool, in_sui: body!.amount_sui, expected_out: quote.quoteOut, min_out: quote.quoteOut * 0.99 } }
+      : {}),
     from: w.h_address,
     digest_if_sent: frozen.digest,
     gas_paid_by: frozen.gasPaidBySponsor ? 'sponsor' : 'the wallet',
