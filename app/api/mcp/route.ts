@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { z } from 'zod'
 import { requireAgent, AuthError } from '@/lib/auth'
 import { getWallet, walletStatus, submitTransfer, submitSwap, approvalStatus, listMarkets, listHistory } from '@/lib/wallet'
+import { withCode } from '@/lib/errors'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -160,7 +161,10 @@ function buildServer(accountId: string): McpServer {
  * The text block opens with SENT or NOT SENT and closes by restating it, because many clients drop
  * structuredContent and models weight first and last position.
  */
-function text(payload: Record<string, unknown>) {
+function text(raw: Record<string, unknown>) {
+  // Decorate HERE rather than at each call site. Every tool result passes through this function,
+  // so a new tool cannot forget to carry a code, and a rule can never ship without a remedy.
+  const payload = withCode(raw)
   const moved = payload.funds_moved === true
   const head = moved ? 'SENT.' : 'NOT SENT.'
   const body = JSON.stringify(payload, null, 1)
