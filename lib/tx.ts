@@ -34,17 +34,35 @@ export function sha256(b: Uint8Array): string {
   return createHash('sha256').update(b).digest('hex')
 }
 
-/** Pin real gas coins. Never [] outside a test: it injects the nonce and mocks a 1e18 gas coin. */
+/**
+ * Pin real gas coins when the wallet holds any.
+ *
+ * A Sui address can hold SUI two ways, and this caught us out: as `Coin<SUI>` OBJECTS, or as a
+ * SIP-58 ADDRESS BALANCE in the accumulator. Measured on a live wallet holding 1.647 SUI:
+ *   coinBalance: 0, addressBalance: 1647069908
+ * so `listOwnedObjects` correctly returned nothing and an earlier version of this function threw
+ * "No SUI coins to pay gas with" on a perfectly well-funded wallet.
+ *
+ * When there are no coin objects we simply do not call setGasPayment and let the node select gas
+ * from the address balance — verified working. Pinning is still preferred where possible, because
+ * an EMPTY gas payment injects a random ValidDuring nonce and makes rebuilt bytes non-reproducible;
+ * leaving gas UNSET is not the same thing as setting it to [].
+ */
 async function pinGas(tx: Transaction, sender: string): Promise<void> {
   const client = getSuiClient()
-  const { objects } = await client.core.listOwnedObjects({ owner: sender, type: `0x2::coin::Coin<${SUI_TYPE}>` })
-  const coins = (objects ?? []).slice(0, 8).map((o: any) => ({
-    objectId: o.objectId ?? o.id,
-    version: String(o.version),
-    digest: o.digest,
-  }))
-  if (!coins.length) throw new Error(`No SUI coins at ${sender} to pay gas with. Fund it first.`)
-  tx.setGasPayment(coins)
+  let objects: unknown[] = []
+  try {
+    const res = await client.core.listOwnedObjects({ owner: sender, type: `0x2::coin::Coin<${SUI_TYPE}>` })
+    objects = (res as { objects?: unknown[] }).objects ?? []
+  } catch {
+    /* fall through to node gas selection */
+  }
+  const coins = objects.slice(0, 8).map((o) => {
+    const c = o as { objectId?: string; id?: string; version: string | number; digest: string }
+    return { objectId: (c.objectId ?? c.id)!, version: String(c.version), digest: c.digest }
+  })
+  if (coins.length) tx.setGasPayment(coins)
+  // else: leave gas unset. The node selects from the address balance.
 }
 
 /** DEMO 2 — "transfer all my funds to <address>". The verified Sui drain shape. */

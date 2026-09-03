@@ -64,6 +64,16 @@ export interface Evidence {
    * limit and recipient rule below would pass a total authority handover clean. Verified live.
    */
   objectTransfers?: { objectId: string; objectType: string; to: string; isCapability: boolean }[]
+  /**
+   * Did the SENDER pay gas, or a sponsor? This changes the spend arithmetic and getting it wrong
+   * is permissive. Measured live on testnet for the same 10,000,000 MIST transfer:
+   *   self-paid   sender delta -12,007,760, netGas 2,007,760  -> principal = -delta - netGas
+   *   sponsored   sender delta -10,000,000, netGas 2,007,760  -> principal = -delta
+   * Subtracting gas from a sponsored transaction reports 7,992,240 for a 10,000,000 spend, so every
+   * sponsored payment would consume less of the cap than it actually spends.
+   * Defaults to true (self-paid), which is the conservative reading.
+   */
+  gasPaidBySender?: boolean
   simulationOk: boolean
 }
 
@@ -111,7 +121,9 @@ export function evaluate(policy: Policy, ev: Evidence, spent: SpentLast7d): Verd
     if (delta >= 0n) continue // receiving is never capped
     const coinType = normalizeStructTag(bc.coinType)
     let principal = -delta
-    if (coinType === gasCoin) principal -= netGas
+    // Only net gas out when the SENDER paid it. Under sponsorship the sponsor's coin covers gas,
+    // so the sender's delta is already the pure principal.
+    if (coinType === gasCoin && ev.gasPaidBySender !== false) principal -= netGas
     if (principal <= 0n) continue // gas-only transaction
 
     const cap = capOf.get(coinType)

@@ -21,6 +21,7 @@
     "@mysten/ledger-signer": "^0.2.22",
     "@mysten/ledgerjs-hw-app-sui": "^0.9.1",
     "@mysten/sui": "^2.29.0",
+    "@shinami/clients": "^0.12.0",
     "next": "16.3.4",
     "openai": "^7.9.0",
     "react": "19.2.8",

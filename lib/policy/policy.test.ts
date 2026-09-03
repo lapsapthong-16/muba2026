@@ -99,3 +99,26 @@ console.log('\n--- EDGE: ordinary NFT to an unknown address ---')
 const nft = evaluate(policy, { ...capGrab, objectTransfers: [{
   objectId: '0xnft', objectType: '0xabc::art::Piece', to: ATTACKER, isCapability: false }] }, () => 0n)
 console.log('  ->', nft.verdict, '|', nft.reasons[0]?.human)
+
+// EDGE — sponsored gas. Measured live: for the SAME 10,000,000 MIST transfer the sender's delta is
+// -12,007,760 self-paid but -10,000,000 sponsored, because the sponsor's coin covers gas. Netting
+// gas out of a sponsored transaction under-counts the spend, which is the permissive direction.
+console.log('\n--- EDGE: sponsored vs self-paid spend arithmetic ---')
+const gasUsedReal = { computationCost: '1000000', storageCost: '1976000', storageRebate: '968240' } // net 2,007,760
+const selfPaid: Evidence = {
+  balanceChanges: [{ coinType: '0x2::sui::SUI', address: SELF, amount: '-12007760' }],
+  gasUsed: gasUsedReal, gasCoinType: '0x2::sui::SUI', movePackages: ['0x2'],
+  gasPaidBySender: true, simulationOk: true,
+}
+const sponsored: Evidence = {
+  ...selfPaid,
+  balanceChanges: [{ coinType: '0x2::sui::SUI', address: SELF, amount: '-10000000' }],
+  gasPaidBySender: false,
+}
+const a = evaluate(policy, selfPaid, () => 0n).outflows[0]?.principal
+const b = evaluate(policy, sponsored, () => 0n).outflows[0]?.principal
+const wrong = evaluate(policy, { ...sponsored, gasPaidBySender: true }, () => 0n).outflows[0]?.principal
+console.log('  self-paid  ->', a, a === '10000000' ? 'OK' : 'WRONG')
+console.log('  sponsored  ->', b, b === '10000000' ? 'OK' : 'WRONG')
+console.log('  sponsored mislabelled self-paid ->', wrong, '(under-counts by the gas: permissive)')
+if (a !== '10000000' || b !== '10000000') { console.log('\nFAILING'); process.exit(1) }

@@ -80,6 +80,10 @@ export async function simulate(
         storageRebate: String(eff.gasUsed?.storageRebate ?? '0'),
       },
       gasCoinType: SUI_TYPE,
+      // Who actually paid gas. Under Shinami sponsorship gasData.owner is the sponsor, and the
+      // spend arithmetic in policy.ts depends on this. Absent gasData we assume self-paid, which
+      // is the conservative reading (it counts MORE against the cap, never less).
+      gasPaidBySender: (T.transaction?.gasData?.owner ?? self) === self,
       movePackages: movePackagesFrom(T),
       objectTransfers: objectTransfersFrom(eff, objectTypes, self),
       simulationOk: true,
