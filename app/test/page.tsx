@@ -65,6 +65,13 @@ export default function TestPage() {
 
   const [env, setEnv] = useState<string[]>([])
 
+  // Keep the list fresh so a card cannot sit showing a countdown for an approval that has since
+  // expired or been resolved elsewhere.
+  useEffect(() => {
+    const t = setInterval(() => { if (!busy) void refresh() }, 15_000)
+    return () => clearInterval(t)
+  }, [busy])
+
   useEffect(() => {
     const hasHid = typeof navigator !== 'undefined' && 'hid' in navigator
     setSupported(hasHid)
@@ -138,8 +145,23 @@ export default function TestPage() {
     setLog([])
     let transport: Awaited<ReturnType<typeof openTransport>> | null = null
     try {
+      // RE-CHECK BEFORE TOUCHING THE DEVICE. This card may have been rendered minutes ago and the
+      // approval can have expired, been declined elsewhere, or been superseded by a policy change
+      // in the meantime. Without this the human unlocks their Ledger, reads the screen, presses
+      // both buttons — and only then learns the approval was already dead, which reads as broken
+      // hardware. Cheap request, saves a wasted device interaction.
+      const check = await fetch(`/api/approve/${p.id}`)
+      const live = check.ok ? await check.json() : null
+      if (!live || live.state !== 'pending' || live.expired) {
+        say(`This approval is no longer live (${live?.state ?? 'not found'}). Nothing was sent.`)
+        say('Refreshing the list — create a new one with `npm run demo` if it is empty.')
+        await refresh()
+        return
+      }
+
       transport = await openTransport(link)
-      const bytes = b64ToBytes(p.tx_bytes_b64)
+      // Sign the bytes the server says are current, not the ones this card was rendered with.
+      const bytes = b64ToBytes(live.tx_bytes_b64)
 
       // Use the OFFICIAL signer rather than driving the app class by hand. It does three things
       // that are easy to get wrong and silently fatal:
