@@ -74,6 +74,12 @@ export interface Evidence {
    * Defaults to true (self-paid), which is the conservative reading.
    */
   gasPaidBySender?: boolean
+  /**
+   * Who paid gas. Needed as an ADDRESS, not just a boolean, because the gas payer shows up in
+   * balanceChanges as fee/rebate settlement rather than as value received — and Shinami's sponsor
+   * address ROTATES between transactions, so it can never be allowlisted.
+   */
+  gasOwner?: string
   simulationOk: boolean
 }
 
@@ -143,7 +149,25 @@ export function evaluate(policy: Policy, ev: Evidence, spent: SpentLast7d): Verd
 
   // 2. Recipients: any OTHER address gaining value.
   const allowed = new Set(policy.allowedRecipients.map((r) => r.address))
-  const recipients = [...new Set(ev.balanceChanges.filter((b) => BigInt(b.amount) > 0n).map((b) => normalizeSuiAddress(b.address)))].filter((a) => a !== self)
+  // The GAS PAYER is not a payee. Its balance row is fee-and-rebate settlement, and when a
+  // transaction deletes objects — which merging coins does — the storage rebate can EXCEED the
+  // fee, leaving the sponsor with a POSITIVE delta. Left unhandled, a payment to an allowlisted
+  // address escalates with "Money is going to 0x1c1a…8b6c", which is the gas station. Verified
+  // reproducible. Netting rather than skipping means a sponsor that is ALSO a genuine payee still
+  // shows a positive residual and is still flagged.
+  const gasOwner = normalizeSuiAddress(ev.gasOwner ?? self)
+  const sponsorPaidGas = ev.gasPaidBySender === false && gasOwner !== self
+  const recipients: string[] = []
+  const seenRecipients = new Set<string>()
+  for (const b of ev.balanceChanges) {
+    const addr = normalizeSuiAddress(b.address)
+    if (addr === self || seenRecipients.has(addr)) continue
+    const gained = sponsorPaidGas && addr === gasOwner ? BigInt(b.amount) + netGas : BigInt(b.amount)
+    if (gained > 0n) {
+      recipients.push(addr)
+      seenRecipients.add(addr)
+    }
+  }
   for (const r of recipients) {
     if (!allowed.has(r)) {
       reasons.push({ rule: 'UNKNOWN_RECIPIENT', verdict: 'require_approval', human: `Money is going to ${r.slice(0, 6)}…${r.slice(-4)}, an address that is not on your approved list.` })

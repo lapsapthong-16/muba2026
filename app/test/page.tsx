@@ -38,8 +38,27 @@ export default function TestPage() {
 
   const say = (s: string) => setLog((l) => [...l, s])
 
+  const [env, setEnv] = useState<string[]>([])
+
   useEffect(() => {
-    setSupported(typeof navigator !== 'undefined' && 'hid' in navigator)
+    const hasHid = typeof navigator !== 'undefined' && 'hid' in navigator
+    setSupported(hasHid)
+    const lines = [
+      `secure context : ${typeof window !== 'undefined' && window.isSecureContext ? 'yes' : 'NO — WebHID needs https or localhost'}`,
+      `origin         : ${typeof location !== 'undefined' ? location.origin : '?'}`,
+      `navigator.hid  : ${hasHid ? 'present' : 'MISSING — use desktop Chrome, Edge or Opera'}`,
+    ]
+    setEnv(lines)
+    if (hasHid) {
+      // Devices this origin has ALREADY been granted. If a Ledger shows here but the picker is
+      // empty, the device is being held by something else — nearly always Ledger Live.
+      ;(navigator as unknown as { hid: { getDevices(): Promise<{ productName: string }[]> } }).hid
+        .getDevices()
+        .then((ds) =>
+          setEnv((e) => [...e, `paired already : ${ds.length ? ds.map((d) => d.productName).join(', ') : 'none yet (normal on first run)'}`])
+        )
+        .catch(() => {})
+    }
     void refresh()
   }, [])
 
@@ -77,6 +96,9 @@ export default function TestPage() {
       say('Device OK.')
     } catch (e) {
       say(`FAILED: ${explainLedgerError(e)}`)
+      // The raw message too — this is a test bench, and a friendly string that misdiagnoses the
+      // cause is worse than no string at all.
+      say(`  raw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`)
     } finally {
       await transport?.close().catch(() => {})
       setBusy(false)
@@ -122,6 +144,9 @@ export default function TestPage() {
       await refresh()
     } catch (e) {
       say(`FAILED: ${explainLedgerError(e)}`)
+      // The raw message too — this is a test bench, and a friendly string that misdiagnoses the
+      // cause is worse than no string at all.
+      say(`  raw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`)
     } finally {
       await transport?.close().catch(() => {})
       setBusy(false)
@@ -150,6 +175,12 @@ export default function TestPage() {
         <p className="mt-6 rounded-md bg-amber-50 p-3 text-sm text-amber-900">
           This browser has no WebHID. Use desktop Chrome, Edge or Opera.
         </p>
+      )}
+
+      {!!env.length && (
+        <pre className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-700">
+{env.join('\n')}
+        </pre>
       )}
 
       <section className="mt-8">

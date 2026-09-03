@@ -122,3 +122,39 @@ console.log('  self-paid  ->', a, a === '10000000' ? 'OK' : 'WRONG')
 console.log('  sponsored  ->', b, b === '10000000' ? 'OK' : 'WRONG')
 console.log('  sponsored mislabelled self-paid ->', wrong, '(under-counts by the gas: permissive)')
 if (a !== '10000000' || b !== '10000000') { console.log('\nFAILING'); process.exit(1) }
+
+// EDGE — the gas sponsor must never be counted as a payee.
+// Merging coins DELETES objects, so the storage rebate can exceed the fee and leave the sponsor
+// with a POSITIVE balance delta. Unhandled, a payment to an allowlisted address escalates with
+// "Money is going to 0x1c1a…8b6c" — which is the gas station. And Shinami's sponsor address
+// rotates between transactions, so it can never simply be allowlisted.
+console.log('\n--- EDGE: sponsor is not a recipient ---')
+const SPONSOR = '0x1c1a56df0bd80abc6dd097b98cd4ff341c3ef2bdb0f2ea7d0ebd87eff3268b6c'
+const FRIEND = '0x2222222222222222222222222222222222222222222222222222222222222222'
+const withFriend = PolicySchema.parse({
+  ...policy, version: 2,
+  allowedRecipients: [{ address: FRIEND, label: 'friend' }],
+})
+const rebateHeavy: Evidence = {
+  balanceChanges: [
+    { coinType: '0x2::sui::SUI', address: SELF, amount: '-5000000' },
+    { coinType: '0x2::sui::SUI', address: FRIEND, amount: '5000000' },
+    { coinType: '0x2::sui::SUI', address: SPONSOR, amount: '2902600' },
+  ],
+  gasUsed: { computationCost: '1000000', storageCost: '100000', storageRebate: '4002600' },
+  gasCoinType: '0x2::sui::SUI', movePackages: ['0x2'],
+  gasPaidBySender: false, gasOwner: SPONSOR, simulationOk: true,
+}
+const rb = evaluate(withFriend, rebateHeavy, () => 0n)
+console.log('  rebate-positive sponsor ->', rb.verdict, `| recipients: ${rb.recipients.length}`,
+  rb.verdict === 'allow' && rb.recipients.length === 1 ? 'OK' : 'WRONG')
+
+// ...but a sponsor that is ALSO a genuine payee must still be caught.
+const sponsorPaid = evaluate(withFriend, { ...rebateHeavy, balanceChanges: [
+  { coinType: '0x2::sui::SUI', address: SELF, amount: '-1005000000' },
+  { coinType: '0x2::sui::SUI', address: FRIEND, amount: '5000000' },
+  { coinType: '0x2::sui::SUI', address: SPONSOR, amount: '1002902600' },
+]}, () => 0n)
+console.log('  sponsor also a payee    ->', sponsorPaid.verdict, `| recipients: ${sponsorPaid.recipients.length}`,
+  sponsorPaid.recipients.length === 2 ? 'OK (still flagged)' : 'WRONG')
+if (rb.verdict !== 'allow' || sponsorPaid.recipients.length !== 2) { console.log('\nFAILING'); process.exit(1) }

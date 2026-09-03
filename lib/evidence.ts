@@ -84,6 +84,7 @@ export async function simulate(
       // spend arithmetic in policy.ts depends on this. Absent gasData we assume self-paid, which
       // is the conservative reading (it counts MORE against the cap, never less).
       gasPaidBySender: (T.transaction?.gasData?.owner ?? self) === self,
+      gasOwner: T.transaction?.gasData?.owner ?? self,
       movePackages: movePackagesFrom(T),
       objectTransfers: objectTransfersFrom(eff, objectTypes, self),
       simulationOk: true,

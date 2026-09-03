@@ -26,12 +26,30 @@ export interface LedgerEnrolment {
 export function explainLedgerError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e)
   const sw = msg.match(/0x([0-9a-fA-F]{4})/)?.[1]?.toLowerCase()
-  if (/no device selected|cancell?ed/i.test(msg)) return 'No device was selected. Plug in your Ledger and try again.'
-  if (/securityerror|user gesture/i.test(msg)) return 'The browser blocked the device prompt. Click the button directly rather than reloading.'
-  if (sw === '5515' || /locked/i.test(msg)) return 'Your Ledger is locked. Unlock it with your PIN, then try again.'
-  if (sw === '6808') return 'The Sui app refused this because blind signing is off. This wallet never needs blind signing — you should not see this.'
-  if (sw === '6e00' || sw === '6d00' || /app.*not.*open/i.test(msg)) return 'Open the Sui app on your Ledger, then try again.'
-  if (/denied|0x6985/i.test(msg)) return 'You declined on the device.'
-  if (/support|hid/i.test(msg)) return 'This browser cannot talk to a Ledger. Use desktop Chrome, Edge or Opera.'
-  return `Ledger error: ${msg.slice(0, 160)}`
+
+  // NOTE: do not add a broad /hid/ catch-all here. Almost every WebHID error mentions "HID"
+  // ("Failed to execute 'requestDevice' on 'HID'"), so a loose match reports every cancelled
+  // picker and every locked device as "your browser is unsupported" — which sends people off to
+  // install a different browser when the real problem is that Ledger Live is still running.
+  // Browser support is feature-detected separately via navigator.hid before the button renders.
+
+  if (/no device selected|the user (?:cancell?ed|aborted)/i.test(msg))
+    return 'No device was selected. If the picker was empty: quit Ledger Live (it holds an exclusive USB claim), unlock the device, and open the Sui app.'
+  if (/securityerror|user gesture|transient activation/i.test(msg))
+    return 'The browser blocked the device prompt because the click was not treated as a direct user action. Click the button again.'
+  if (sw === '5515' || /locked/i.test(msg))
+    return 'Your Ledger is locked. Unlock it with your PIN, then try again.'
+  if (sw === '6808')
+    return 'The Sui app refused this because blind signing is off. This wallet never needs blind signing — if you see this, the transaction was not the shape we expected.'
+  // 0x6e01 CLA_NOT_SUPPORTED_BOOTLOADER, 0x6e00 CLA_NOT_SUPPORTED, 0x6d00 INS_NOT_SUPPORTED,
+  // 0x6511 no app running. All mean the same thing in practice: the APDU reached the DASHBOARD
+  // rather than the Sui app, because no app is open. This is by far the most common failure and it
+  // must not fall through to a generic message.
+  if (sw === '6e01' || sw === '6e00' || sw === '6d00' || sw === '6511' || /cla_not_supported|app.*not.*open|ins_not_supported/i.test(msg))
+    return 'Your Ledger is on its home screen, not in the Sui app. Open the Sui app on the device — the screen should read "Sui is ready" — then click again. If Sui is not in your app list, install it from Ledger Live under My Ledger.'
+  if (sw === '6985' || /denied|rejected by user/i.test(msg))
+    return 'You declined on the device. Nothing was sent.'
+  if (/already open|failed to open the device|in use/i.test(msg))
+    return 'Something else is holding the device — usually Ledger Live. Quit it completely and try again.'
+  return `Ledger error: ${msg.slice(0, 200)}`
 }
