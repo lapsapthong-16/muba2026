@@ -8,10 +8,11 @@
     "start": "next start",
     "gonka": "tsx --env-file=.env scripts/call-gonka.ts",
     "lint": "eslint",
-    "pipeline": "tsx --env-file-if-exists=.env scripts/pipeline.mts",
+    "pipeline": "tsx --env-file=.env scripts/pipeline.mts",
     "test:policy": "tsx lib/policy/policy.test.ts",
     "test:gate": "tsx lib/gate.test.ts",
-    "test": "npm run test:gate && npm run test:policy"
+    "test": "npm run test:gate && npm run test:policy",
+    "fund": "tsx --env-file=.env scripts/fund.mts"
   },
   "dependencies": {
     "@ledgerhq/hw-transport-webhid": "^6.36.0",
