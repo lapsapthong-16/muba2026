@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getDb } from './db'
 import { getBalance, SUI_TYPE, SUI_DECIMALS } from './sui'
-import { buildTransfer, buildTransferAll } from './tx'
+import { buildTransfer, buildTransferAll, type FrozenTx } from './tx'
 import { executeFromSpending, recordSpend } from './execute'
 import { simulate } from './evidence'
 import { PolicySchema, evaluate, type Policy } from './policy/policy'
@@ -161,11 +161,41 @@ export async function submitTransfer(
   }
 
   if (decision.outcome === 'needs_ledger') {
-    const id = record(accountId, frozen, decision, sim, intent, w, 'pending')
+    // REBUILD FROM M. The transaction we scored was sent from H, a 1-of-2 the platform key already
+    // satisfies alone — a Ledger tap on those bytes would prove nothing, because we could have
+    // signed them without the device. Re-originating from M (2-of-2) is what makes the hardware
+    // signature load-bearing: validators reject the platform partial on its own with
+    // "Insufficient weight=1 threshold=2".
+    if (!w.m_address) {
+      return { outcome: 'blocked', funds_moved: false, rule: 'NO_PROTECTED_ADDRESS',
+        reasons: ['This needs approval but no Ledger is enrolled, so there is nowhere to escalate to.'] }
+    }
+    let escalated
+    try {
+      escalated =
+        args.amount_sui === 'all'
+          ? await buildTransferAll(w.m_address, args.to)
+          : await buildTransfer(w.m_address, args.to, toMist(args.amount_sui))
+    } catch (e) {
+      return { outcome: 'blocked', funds_moved: false, rule: 'PROTECTED_UNFUNDED',
+        reasons: [
+          e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e),
+          `Escalated payments are sent from the protected address (${w.m_address}), which needs its own funds.`,
+        ] }
+    }
+    // Score the bytes that will actually be signed, not the ones we replaced.
+    const sim2 = await simulate(escalated.bytes, w.m_address)
+    const verdict2 = sim2.kind === 'ok'
+      ? evaluate({ ...policy, walletAddress: w.m_address }, sim2.evidence, (ct) => spentLast7d(accountId, ct))
+      : null
+    const decision2 = gate(sim2, verdict2, ballot)
+
+    const id = record(accountId, escalated, decision2, sim2, intent, w, 'pending')
     return {
       outcome: 'awaiting_approval', funds_moved: false, approval_id: id, rule: decision.rule,
       reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
-      note: 'NOTHING HAS BEEN SENT. The owner must approve this on their Ledger. Poll wallet_approval_status. Do not retry this transfer — a retry creates a second pending approval, it does not bypass this one.',
+      from: w.m_address,
+      note: 'NOTHING HAS BEEN SENT. This was re-issued from the protected address, which needs the owner\'s Ledger as a second signature — our key alone cannot move it. Poll wallet_approval_status. Do not retry: a retry creates a second pending approval, it does not bypass this one.',
     }
   }
 
@@ -198,16 +228,24 @@ export async function submitTransfer(
 }
 
 function record(
-  accountId: string, frozen: { bytes: Uint8Array; sha256: string; digest: string; sender: string },
+  accountId: string, frozen: FrozenTx,
   d: GateDecision, sim: unknown, intent: string, w: WalletRow, state: string
 ): string {
   const id = randomUUID()
+  // The SPONSOR SIGNATURE has to survive to approval time: it was produced at build time over
+  // these exact bytes, and a sponsored transaction needs it alongside ours at execution. Losing it
+  // would leave a pending approval that can never be broadcast.
+  const stored = {
+    sim,
+    sponsorSignature: frozen.sponsorSignature,
+    gasPaidBySponsor: frozen.gasPaidBySponsor,
+  }
   getDb().prepare(
     `INSERT INTO decisions(id,account_id,state,intent,evidence_json,verdict_json,gonka_request_id,
        tx_bytes_b64,bytes_sha256,sender,policy_version,digest,created_at,expires_at)
      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
-    id, accountId, state, intent, JSON.stringify(sim), JSON.stringify(d), d.gonkaRequestId,
+    id, accountId, state, intent, JSON.stringify(stored), JSON.stringify(d), d.gonkaRequestId,
     Buffer.from(frozen.bytes).toString('base64'), frozen.sha256, frozen.sender,
     w.policy_version, state === 'executed' ? frozen.digest : null, Date.now(), Date.now() + APPROVAL_TTL_MS
   )

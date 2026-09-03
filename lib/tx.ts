@@ -59,7 +59,25 @@ async function ownedSuiCoins(owner: string): Promise<{ objectId: string; version
   return (res.objects ?? []).map((o) => ({ objectId: o.objectId, version: String(o.version), digest: o.digest }))
 }
 
-type Build = (tx: Transaction, coins: { objectId: string }[]) => void
+type Build = (tx: Transaction, coins: { objectId: string }[], sponsored: boolean) => void
+
+/**
+ * Consolidate the wallet's coins into one spendable input.
+ *
+ * Splitting from coins[0] alone is wrong: a wallet holding 0.06 SUI as two 0.03 coins cannot send
+ * 0.04, and fails with a bare "InsufficientCoinBalance in command 0" that reads like the wallet is
+ * empty. Merge first so the whole balance is reachable.
+ *
+ * When SELF-PAID we must leave one coin behind for the node's gas selection — every coin consumed
+ * as a command input is unavailable to pay for the transaction. Under sponsorship Shinami provides
+ * gas, so everything can be merged and the whole balance really is spendable.
+ */
+function consolidate(tx: Transaction, coins: { objectId: string }[], sponsored: boolean) {
+  const usable = sponsored ? coins : coins.slice(0, Math.max(1, coins.length - 1))
+  const primary = tx.object(usable[0].objectId)
+  if (usable.length > 1) tx.mergeCoins(primary, usable.slice(1).map((c) => tx.object(c.objectId)))
+  return primary
+}
 
 /**
  * Sponsor if we can, self-pay if we cannot. A gas station outage should degrade the wallet, not
@@ -80,7 +98,7 @@ async function buildAndFreeze(sender: string, build: Build): Promise<FrozenTx> {
     try {
       const { GasStationClient, buildGaslessTransaction } = await shinami()
       const gas = new GasStationClient(process.env.SHINAMI_GAS_STATION_ACCESS_KEY!)
-      const gasless = await buildGaslessTransaction((tx: Transaction) => build(tx, coins), {
+      const gasless = await buildGaslessTransaction((tx: Transaction) => build(tx, coins, true), {
         sender,
         gasBudget: 10_000_000,
         sui: client,
@@ -99,16 +117,16 @@ async function buildAndFreeze(sender: string, build: Build): Promise<FrozenTx> {
   // address balance. Note that is not the same as setGasPayment([]), which injects a random nonce.
   const tx = new Transaction()
   tx.setSender(sender)
-  build(tx, coins)
+  build(tx, coins, false)
   const bytes = await tx.build({ client })
   const digest = await tx.getDigest() // a Promise in 2.29 — await it
   return { bytes, sha256: sha256(bytes), digest, sender, gasPaidBySponsor: false }
 }
 
-/** A bounded transfer, sourced from the wallet's own coin — never from tx.gas. */
+/** A bounded transfer, sourced from the wallet's own coins — never from tx.gas. */
 export async function buildTransfer(sender: string, to: string, amountMist: bigint): Promise<FrozenTx> {
-  return buildAndFreeze(sender, (tx, coins) => {
-    const [coin] = tx.splitCoins(tx.object(coins[0].objectId), [amountMist])
+  return buildAndFreeze(sender, (tx, coins, sponsored) => {
+    const [coin] = tx.splitCoins(consolidate(tx, coins, sponsored), [amountMist])
     tx.transferObjects([coin], to)
   })
 }
@@ -119,9 +137,7 @@ export async function buildTransfer(sender: string, to: string, amountMist: bigi
  * reserve, so there is nothing left behind.
  */
 export async function buildTransferAll(sender: string, to: string): Promise<FrozenTx> {
-  return buildAndFreeze(sender, (tx, coins) => {
-    const primary = tx.object(coins[0].objectId)
-    if (coins.length > 1) tx.mergeCoins(primary, coins.slice(1).map((c) => tx.object(c.objectId)))
-    tx.transferObjects([primary], to)
+  return buildAndFreeze(sender, (tx, coins, sponsored) => {
+    tx.transferObjects([consolidate(tx, coins, sponsored)], to)
   })
 }

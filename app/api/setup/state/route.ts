@@ -30,8 +30,13 @@ export async function GET(req: Request) {
     /* leave zeros; the page shows a dash */
   }
 
+  const pending = getDb()
+    .prepare("SELECT id FROM decisions WHERE account_id=? AND state='pending' AND expires_at > ? ORDER BY created_at DESC")
+    .all(accountId, Date.now()) as { id: string }[]
+
   return Response.json({
     network: NETWORK,
+    pending_ids: pending.map((p) => p.id),
     spending_address: w.h_address || null,
     protected_address: w.m_address,
     ledger_address: w.ledger_address,
