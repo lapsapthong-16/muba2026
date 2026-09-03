@@ -34,8 +34,14 @@ function openTransport(link: Link) {
  *     submit the partial so the server can combine it with ours and broadcast.
  */
 
+interface Adjustments {
+  raise_limit?: { from_sui: string; to_sui: string; ceiling_sui: string; why: string }
+  allow_recipient?: { address: string; why: string }
+}
+
 interface Pending {
   id: string
+  adjustments?: Adjustments
   intent: string
   from: string
   rule: string
@@ -99,6 +105,11 @@ export default function TestPage() {
     }
     void refresh()
   }, [])
+
+  // Keyed by decision id: two cards on screen must never share a tick.
+  const [optIn, setOptIn] = useState<Record<string, { raise?: boolean; allow?: boolean }>>({})
+  const tick = (id: string, k: 'raise' | 'allow') =>
+    setOptIn((o) => ({ ...o, [id]: { ...o[id], [k]: !o[id]?.[k] } }))
 
   async function refresh() {
     const r = await fetch('/api/setup/state')
@@ -190,11 +201,18 @@ export default function TestPage() {
       const r = await fetch(`/api/approve/${p.id}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ledgerSignature: serialized }),
+        body: JSON.stringify({
+          ledgerSignature: serialized,
+          // Booleans only. The amount and the address are recomputed server-side from the fresh
+          // simulation, so nothing here can be inflated by tampering with the page.
+          also_raise_limit: !!optIn[p.id]?.raise,
+          also_allow_recipient: !!optIn[p.id]?.allow,
+        }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error ?? `Server returned ${r.status}`)
       say(`EXECUTED. digest ${body.digest}`)
+      for (const line of (body.guardrails_updated ?? []) as string[]) say(line)
       say(body.explorer)
       await refresh()
     } catch (e) {
@@ -369,6 +387,37 @@ export default function TestPage() {
               [{p.rule}] · expires in {p.expires_in_seconds}s · this address needs your device as a
               second signature; our key alone cannot move it
             </p>
+            {(p.adjustments?.raise_limit || p.adjustments?.allow_recipient) && (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                <p className="text-[11px] font-medium uppercase tracking-wider text-amber-800">
+                  While you are here
+                </p>
+                <p className="mt-1 text-xs text-zinc-600">
+                  Optional. Approving sends this payment either way — ticking a box also changes the
+                  rule that stopped it, so you are not asked again for the same thing.
+                </p>
+                {p.adjustments.raise_limit && (
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 text-sm">
+                    <input type="checkbox" className="mt-1" checked={!!optIn[p.id]?.raise}
+                      onChange={() => tick(p.id, 'raise')} />
+                    <span>
+                      <b>Raise my single-payment limit to {p.adjustments.raise_limit.to_sui} SUI</b>
+                      <span className="block text-xs text-zinc-600">{p.adjustments.raise_limit.why}</span>
+                    </span>
+                  </label>
+                )}
+                {p.adjustments.allow_recipient && (
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 text-sm">
+                    <input type="checkbox" className="mt-1" checked={!!optIn[p.id]?.allow}
+                      onChange={() => tick(p.id, 'allow')} />
+                    <span>
+                      <b>Add this address to my approved payees</b>
+                      <span className="block text-xs text-zinc-600">{p.adjustments.allow_recipient.why}</span>
+                    </span>
+                  </label>
+                )}
+              </div>
+            )}
             <div className="mt-3 flex gap-2">
               <button onClick={() => signApproval(p)} disabled={busy}
                 className="rounded-full bg-black px-4 py-1.5 text-sm text-white disabled:opacity-40">
