@@ -252,6 +252,18 @@ function record(
   // The SPONSOR SIGNATURE has to survive to approval time: it was produced at build time over
   // these exact bytes, and a sponsored transaction needs it alongside ours at execution. Losing it
   // would leave a pending approval that can never be broadcast.
+  // A 'pending' row is one the approve route will hand to executeFromProtected, which signs with
+  // the M committee. If its sender is anything but M, the human taps their Ledger, the signature
+  // VERIFIES — combineAndVerify checks the signature against the bytes, never that the signer's
+  // address matches the sender — and the validator rejects it only at broadcast, after the device
+  // has already said yes. Fail here instead, where the mistake is one line from its cause.
+  if (state === 'pending' && frozen.sender !== w.m_address) {
+    throw new Error(
+      `Refusing to store an approval that cannot be signed: sender ${frozen.sender} is not the ` +
+        `protected address ${w.m_address}. Escalated transactions must be rebuilt from M.`
+    )
+  }
+
   const stored = {
     sim,
     sponsorSignature: frozen.sponsorSignature,
@@ -314,7 +326,8 @@ export async function submitSwap(
 
   const pool = args.pool ?? 'SUI_DBUSDC'
 
-  // Quote FIRST. Measured live, this book returns zero output below 2 SUI even though its stated
+  // Quote FIRST. The fillable floor is set by the resting orders, not by the pool config, so it
+  // moves: measured live this book returns zero at 1.0 SUI and fills from 1.1, even though its stated
   // minSize is 1 — building a swap the book cannot fill wastes gas and produces a transaction the
   // agent cannot learn anything from.
   let quote
@@ -328,7 +341,7 @@ export async function submitSwap(
     return {
       outcome: 'blocked', funds_moved: false, rule: 'BELOW_MARKET_MINIMUM',
       reasons: [`Swapping ${args.amount_sui} SUI on ${pool} returns nothing — the order book has no fill at that size.`],
-      hint: 'This book needs about 2 SUI to fill. Ask the owner to fund the wallet, or trade more.',
+      hint: 'Try a larger size — this book most recently began filling around 1.1 SUI, but that floor moves with the resting orders. If larger sizes also return nothing, the book is empty.',
     }
   }
 
@@ -350,16 +363,52 @@ export async function submitSwap(
     : null
   const decision = gate(sim, verdict, ballot)
 
-  if (decision.outcome !== 'allow') {
-    const id = record(accountId, frozen, decision, sim, intent, w,
-      decision.outcome === 'blocked' ? 'blocked' : 'pending')
+  if (decision.outcome === 'blocked') {
+    record(accountId, frozen, decision, sim, intent, w, 'blocked')
     return {
-      outcome: decision.outcome === 'blocked' ? 'blocked' : 'awaiting_approval',
-      funds_moved: false, rule: decision.rule, reasons: decision.reasons,
-      ...(decision.outcome === 'needs_ledger' ? { approval_id: id } : {}),
+      outcome: 'blocked', funds_moved: false, rule: decision.rule, reasons: decision.reasons,
       quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
       risk: decision.ballotRisk, risk_score: decision.ballotScore,
       note: 'Nothing was swapped.',
+    }
+  }
+
+  if (decision.outcome === 'needs_ledger') {
+    // REBUILD FROM M, exactly as submitTransfer does. Storing the H-built bytes here was a bug you
+    // could only see at the very end: the approve route calls executeFromProtected
+    // unconditionally, so it would combine an M-committee signature over a transaction whose
+    // sender is H. combineAndVerify checks the signature against the BYTES, not that the signer's
+    // address matches the sender, so it verifies happily and the validator rejects it at
+    // broadcast — an approval the human could sign on the device and still never see settle.
+    if (!w.m_address) {
+      return { outcome: 'blocked', funds_moved: false, rule: 'NO_PROTECTED_ADDRESS',
+        reasons: ['This trade needs approval but no Ledger is enrolled, so there is nowhere to escalate to.'] }
+    }
+    let escalated: FrozenTx
+    try {
+      escalated = await buildSwap(w.m_address, pool, args.amount_sui, minOut)
+    } catch (e) {
+      return { outcome: 'blocked', funds_moved: false, rule: 'PROTECTED_UNFUNDED',
+        reasons: [
+          e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e),
+          `Escalated trades are sent from the protected address (${w.m_address}), which needs its own funds.`,
+        ] }
+    }
+    // Score the bytes that will actually be signed, not the ones we replaced.
+    const sim2 = await simulate(escalated.bytes, w.m_address)
+    const verdict2 = sim2.kind === 'ok'
+      ? evaluate({ ...policy, walletAddress: w.m_address }, sim2.evidence, (ct) => spentLast7d(accountId, ct))
+      : null
+    const decision2 = gate(sim2, verdict2, ballot)
+
+    const id = record(accountId, escalated, decision2, sim2, intent, w, 'pending')
+    return {
+      outcome: 'awaiting_approval', funds_moved: false, approval_id: id,
+      rule: decision.rule, reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
+      quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
+      risk: decision2.ballotRisk, risk_score: decision2.ballotScore,
+      from: w.m_address,
+      note: 'NOTHING WAS SWAPPED. This was re-issued from the protected address, which needs the owner\'s Ledger as a second signature. Poll wallet_approval_status.',
     }
   }
 

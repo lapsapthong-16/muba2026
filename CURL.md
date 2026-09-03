@@ -112,6 +112,9 @@ You get back `would` (`allow` | `needs_ledger` | `blocked`), the `rule` that dec
 simulated `balance_changes` with each party named, the Gonka `risk` block, and
 `spend_so_far_this_week_sui`. `"all"` is transfer-only — a swap needs a concrete size.
 
+Small swaps return nothing: the book fills only above a floor set by the resting orders (recently
+~1.1 SUI), and that floor moves. Quote rather than assume — `/api/check` does it for you.
+
 **Read the field `would`, not the HTTP status.** A blocked transaction is a successful 200.
 
 ---

@@ -201,9 +201,10 @@ export async function buildTransferAll(sender: string, to: string): Promise<Froz
  * also what makes the trade legible to the risk engine: value leaves and value returns, in the same
  * transaction, which is exactly the shape a plain drain does not have.
  *
- * NOTE ON SIZE. The SUI_DBUSDC book has minSize 1 and lotSize 0.1, but measured live it returns
- * quoteOut 0 for anything under 2 SUI — below that the order matches nothing and the swap is
- * pointless. Quote before building and refuse a zero-output trade rather than signing one.
+ * NOTE ON SIZE. The SUI_DBUSDC book has minSize 1 and lotSize 0.1, but the real floor is neither:
+ * measured live it returns quoteOut 0 at 1.0 SUI and fills from 1.1 (1.1 -> 0.724, 1.2 -> 0.7964,
+ * 1.5 -> 1.0136, 2 -> 1.3756). That floor is a property of the resting orders, not of the pool
+ * config, so it MOVES. Never hard-code it — quote first and refuse a zero-output trade.
  *
  * WE SUPPLY THE BASE COIN OURSELVES. Left to itself the SDK calls coinWithBalance({type, balance})
  * with no useGasCoin, and that flag DEFAULTS TO TRUE for SUI — so the resolver looks only at the

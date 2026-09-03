@@ -78,7 +78,7 @@ run "curl -sX POST $B/api/check -H 'Authorization: Bearer $BEARER' -H 'content-t
 
 step "7b · SIMULATE A DEEPBOOK TRADE — the agent's real work, quoted before it is built."
 run "curl -sX POST $B/api/check -H 'Authorization: Bearer $BEARER' -H 'content-type: application/json' -d '{\"action\":\"swap\",\"amount_sui\":2,\"pool\":\"SUI_DBUSDC\",\"reason\":\"rebalancing into USDC\"}' | jq_ 1600"
-echo "   (needs >= 2 SUI in H: below that the book fills nothing and this returns BELOW_MARKET_MINIMUM)"
+echo "   (needs a fillable size in H: the book floor moves with the resting orders, recently ~1.1 SUI)"
 
 step "8 · ACTUALLY SEND a safe payment — this one commits."
 run "curl -sX POST $B/api/mcp -H \"Authorization: Bearer $BEARER\" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"wallet_transfer\",\"arguments\":{\"to\":\"$FRIEND\",\"amount_sui\":0.002,\"reason\":\"paying a friend back\"}}}' | python3 -c \"import sys,json;r=json.load(sys.stdin)['result'];print(json.dumps(r.get('structuredContent',r),indent=1)[:700])\""

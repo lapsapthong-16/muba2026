@@ -67,7 +67,7 @@ export async function POST(req: Request) {
       return Response.json({
         would: 'blocked', stage: 'quote', rule: 'BELOW_MARKET_MINIMUM', nothing_happened: true,
         reasons: [`Swapping ${body!.amount_sui} SUI on ${pool} returns nothing — the order book has no fill at that size.`],
-        hint: 'This book needs about 2 SUI to fill.',
+        hint: 'Try a larger size. This book most recently began filling around 1.1 SUI, but that floor moves with the resting orders.',
       })
     }
   }

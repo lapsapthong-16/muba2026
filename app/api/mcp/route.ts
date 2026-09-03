@@ -67,7 +67,8 @@ function buildServer(accountId: string): McpServer {
       title: 'Trade on DeepBook',
       description:
         'Swap SUI for another asset on DeepBook. COMMITS. Quoted first, and refused outright if ' +
-        'the order book cannot fill the size — this book needs roughly 2 SUI. The slippage floor ' +
+        'the order book cannot fill the size — small trades match nothing, and the floor moves with ' +
+        'the resting orders (recently around 1.1 SUI). The slippage floor ' +
         'is set by the wallet, not by you. Same guardrails and same risk check as a transfer; a ' +
         'trade usually scores lower than a payment because the value comes back in the same ' +
         'transaction.',
