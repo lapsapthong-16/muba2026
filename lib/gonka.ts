@@ -1,42 +1,7 @@
 import OpenAI from 'openai'
-import fs from 'node:fs'
-import path from 'node:path'
 
-function loadDotEnv() {
-  const envPath = path.resolve(process.cwd(), '.env')
-  if (fs.existsSync(envPath)) {
-    if (typeof process.loadEnvFile === 'function') {
-      try {
-        process.loadEnvFile(envPath)
-        return
-      } catch {}
-    }
-    // Fallback .env parser
-    try {
-      const content = fs.readFileSync(envPath, 'utf-8')
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith('#')) continue
-        const eqIdx = trimmed.indexOf('=')
-        if (eqIdx !== -1) {
-          const key = trimmed.slice(0, eqIdx).trim()
-          let value = trimmed.slice(eqIdx + 1).trim()
-          if (
-            (value.startsWith('"') && value.endsWith('"')) ||
-            (value.startsWith("'") && value.endsWith("'"))
-          ) {
-            value = value.slice(1, -1)
-          }
-          if (!process.env[key]) {
-            process.env[key] = value
-          }
-        }
-      }
-    } catch {}
-  }
-}
-
-loadDotEnv()
+// Server-only module. Next.js loads `.env` itself, so there is no dotenv shim here —
+// and no top-level side effects, so importing this file never fires a network call.
 
 export const GONKA_MODELS = {
   DEEPSEEK: 'deepseek-ai/DeepSeek-V4-Flash-0731',
@@ -55,6 +20,7 @@ export interface GonkaClientConfig {
 
 export function createGonkaClient(config?: GonkaClientConfig): OpenAI {
   const apiKey = config?.apiKey || process.env.GONKA_API_KEY || process.env.OPENAI_API_KEY
+  // The SDK baseURL INCLUDES /v1 (README §3.3).
   const baseURL = config?.baseURL || process.env.GONKA_BASE_URL || 'https://api.gonkarouter.io/v1'
 
   if (!apiKey || apiKey === 'sk-xxxxxx') {
@@ -69,6 +35,12 @@ export function createGonkaClient(config?: GonkaClientConfig): OpenAI {
   return new OpenAI({
     apiKey,
     baseURL,
+    // Never let the gateway silently serve a different model (README §3.2 item 2).
+    defaultHeaders: { 'X-Gonka-No-Fallback': 'true' },
+    // A cold Gonka shard can take well over a minute to answer.
+    timeout: 180_000,
+    // Retries are handled by withSaturationRetry below, which also covers 403.
+    maxRetries: 0,
   })
 }
 
@@ -91,17 +63,49 @@ export interface GonkaCallOptions {
 }
 
 export interface GonkaCallResult {
+  /** The model we asked for. */
   model: string
+  /** The model that actually served. Differs from `model` on gateway substitution. */
+  modelServed: string | null
+  /** The X-Gonka-Fallback header, e.g. "requested -> served". null when honoured. */
+  fallback: string | null
+  /** The Gonka Request ID — the X-Request-Id response header (README §3.2 item 1). */
+  requestId: string | null
   content: string | null
   usage?: OpenAI.Completions.CompletionUsage
   raw: OpenAI.Chat.Completions.ChatCompletion
 }
 
 function resolveModelId(model: ModelInput): string {
-  if (model in GONKA_MODELS) {
+  if (Object.prototype.hasOwnProperty.call(GONKA_MODELS, model)) {
     return GONKA_MODELS[model as GonkaModelKey]
   }
   return model
+}
+
+/**
+ * Gonka is decentralised GPU inference with a per-account concurrency cap. When a
+ * shard is saturated it answers 429 or 403 with no Retry-After, usually for seconds
+ * rather than minutes. With X-Gonka-No-Fallback set we get those statuses instead of
+ * a silently substituted model, so they are expected traffic, not bugs.
+ */
+const SATURATION_STATUSES = new Set([403, 408, 409, 429, 500, 502, 503, 504])
+
+async function withSaturationRetry<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err
+      const status = (err as { status?: number }).status
+      if (status === undefined || !SATURATION_STATUSES.has(status)) throw err
+      if (attempt === attempts - 1) break
+      const backoff = Math.min(2 ** attempt * 1_000, 8_000) + Math.floor(Math.random() * 500)
+      await new Promise((resolve) => setTimeout(resolve, backoff))
+    }
+  }
+  throw lastError
 }
 
 export async function callGonka(options: GonkaCallOptions): Promise<GonkaCallResult> {
@@ -125,15 +129,23 @@ export async function callGonka(options: GonkaCallOptions): Promise<GonkaCallRes
     throw new Error('[Gonka] Either `prompt` or `messages` must be provided.')
   }
 
-  const response = await client.chat.completions.create({
-    model: modelId,
-    messages,
-    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-    ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-  })
+  // .withResponse() so the X-Request-Id header survives — a bare create() throws it away.
+  const { data: response, response: httpResponse } = await withSaturationRetry(() =>
+    client.chat.completions
+      .create({
+        model: modelId,
+        messages,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+      })
+      .withResponse()
+  )
 
   return {
     model: modelId,
+    modelServed: response.model ?? null,
+    fallback: httpResponse.headers.get('x-gonka-fallback'),
+    requestId: httpResponse.headers.get('x-request-id'),
     content: response.choices[0]?.message?.content ?? null,
     usage: response.usage,
     raw: response,
@@ -193,55 +205,4 @@ export async function callAllModels(
     KIMI: kimiRes.status === 'fulfilled' ? kimiRes.value : { error: kimiRes.reason?.message || 'Failed' },
     MINIMAX: minimaxRes.status === 'fulfilled' ? minimaxRes.value : { error: minimaxRes.reason?.message || 'Failed' },
   }
-}
-
-async function main() {
-  console.log('==================================================')
-  console.log(' Gonka Router Multi-Model Calling Test')
-  console.log('==================================================\n')
-
-  const testPrompt = 'Say hello and give one fun fact in 1 sentence!'
-
-  try {
-    // Calling Method 1: DeepSeek
-    console.log('👉 [1/3] Calling DeepSeek...')
-    const deepseekOutput = await callDeepSeek(testPrompt)
-    console.log('🤖 Model:', deepseekOutput.model)
-    console.log('💬 Response:', deepseekOutput.content)
-    console.log('--------------------------------------------------\n')
-
-    // Calling Method 2: Kimi
-    console.log('👉 [2/3] Calling Kimi...')
-    const kimiOutput = await callKimi(testPrompt)
-    console.log('🤖 Model:', kimiOutput.model)
-    console.log('💬 Response:', kimiOutput.content)
-    console.log('--------------------------------------------------\n')
-
-    // Calling Method 3: MiniMax
-    console.log('👉 [3/3] Calling MiniMax...')
-    const minimaxOutput = await callMiniMax(testPrompt)
-    console.log('🤖 Model:', minimaxOutput.model)
-    console.log('💬 Response:', minimaxOutput.content)
-    console.log('--------------------------------------------------\n')
-
-    // Unified Method: Calling directly via callGonka()
-    console.log('👉 [Bonus] Calling via generic `callGonka()` method...')
-    const genericOutput = await callGonka({
-      model: 'DEEPSEEK', // or GONKA_MODELS.DEEPSEEK
-      prompt: 'What is 2 + 2? Reply with just the number.',
-    })
-    console.log('💬 Generic Call Response:', genericOutput.content)
-    console.log('==================================================')
-  } catch (err: unknown) {
-    if (err instanceof Error) {
-      console.error('\n❌ Execution Error:', err.message)
-    } else {
-      console.error('\n❌ Unknown error occurred:', err)
-    }
-  }
-}
-
-// Execute test when run directly
-if (process.env.NODE_ENV !== 'production') {
-  main()
 }
