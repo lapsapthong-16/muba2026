@@ -13,7 +13,8 @@
     "test:gate": "tsx lib/gate.test.ts",
     "test": "npm run test:gate && npm run test:policy",
     "fund": "tsx --env-file=.env scripts/fund.mts",
-    "onboard": "tsx --env-file=.env scripts/onboard.mts"
+    "onboard": "tsx --env-file=.env scripts/onboard.mts",
+    "demo": "tsx --env-file=.env scripts/demo.mts"
   },
   "dependencies": {
     "@ledgerhq/hw-transport-webhid": "^6.36.0",
