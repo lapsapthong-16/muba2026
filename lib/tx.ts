@@ -222,6 +222,12 @@ export async function buildSwap(
   minOut: number
 ): Promise<FrozenTx> {
   const { DeepBookClient } = await import('@mysten/deepbook-v3')
+  // DYNAMIC, to match how DeepBook itself loads it. @mysten/sui ships both a CJS and an ESM build
+  // from one package, so a static import here resolves to CJS while DeepBook's ESM import resolves
+  // to the ESM copy — two module instances, two different coinWithBalance functions, and
+  // addIntentResolver throws when the same intent arrives with a different function reference.
+  // Loading it the same way DeepBook does puts us in the same instance.
+  const { coinWithBalance } = await import('@mysten/sui/transactions')
   return buildAndFreeze(
     sender,
     (tx, sponsored) => {
@@ -236,7 +242,7 @@ export async function buildSwap(
         amount,
         deepAmount: 0,
         minOut,
-        baseCoin: tx.coin({
+        baseCoin: coinWithBalance({
           type: SUI_TYPE,
           balance: BigInt(Math.round(amount * 1e9)),
           useGasCoin: !sponsored,

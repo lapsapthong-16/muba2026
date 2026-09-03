@@ -287,6 +287,8 @@ export async function submitTransfer(
           : await buildTransfer(w.m_address, args.to, toMist(args.amount_sui))
     } catch (e) {
       return { outcome: 'blocked', funds_moved: false, rule: 'PROTECTED_UNFUNDED',
+        escalated_because: decision.rule,
+        escalation_reasons: decision.reasons,
         reasons: [
           e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e),
           `Escalated payments are sent from the protected address (${w.m_address}), which needs its own funds.`,
@@ -453,9 +455,17 @@ export async function submitSwap(
 
   const sim = await simulate(frozen.bytes, w.h_address)
   const verdict = sim.kind === 'ok' ? evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct)) : null
-  const ballot = sim.kind === 'ok' && verdict
-    ? await requestBallot(sim.evidence, w.h_address, args.reason, ESCALATION_BUDGET_MS)
-    : null
+  // Identical treatment to submitTransfer, and it must stay identical: a trade and a payment
+  // should not answer to different rules about a busy model. This was asymmetric — swaps always
+  // passed the ballot, so a single slow Gonka call turned every clean trade into a hardware
+  // prompt, which is how a demo ends up escalating the transaction it was meant to breeze through.
+  let ballot = null
+  if (sim.kind === 'ok' && verdict) {
+    const escalating = verdict.verdict !== 'allow'
+    const b = await requestBallot(sim.evidence, w.h_address, args.reason,
+      escalating ? ESCALATION_BUDGET_MS : ADVISORY_BUDGET_MS)
+    ballot = b.ok || escalating ? b : null
+  }
   const decision = gate(sim, verdict, ballot)
 
   if (args.dry_run) {
@@ -491,6 +501,10 @@ export async function submitSwap(
       escalated = await buildSwap(w.m_address, pool, args.amount_sui, minOut)
     } catch (e) {
       return { outcome: 'blocked', funds_moved: false, rule: 'PROTECTED_UNFUNDED',
+        // Carry the ORIGINAL rule. Without it the only thing anyone sees is the rebuild failing,
+        // which says nothing about why the trade was escalated in the first place.
+        escalated_because: decision.rule,
+        escalation_reasons: decision.reasons,
         reasons: [
           e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e),
           `Escalated trades are sent from the protected address (${w.m_address}), which needs its own funds.`,
