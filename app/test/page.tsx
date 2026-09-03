@@ -3,6 +3,7 @@
 // Static imports at module top — a dynamic import() inside the click handler consumes the
 // transient user activation and makes TransportWebHID.request() throw SecurityError.
 import TransportWebHID from '@ledgerhq/hw-transport-webhid'
+import TransportWebBLE from '@ledgerhq/hw-transport-web-ble'
 import Sui from '@mysten/ledgerjs-hw-app-sui'
 import { LedgerSigner } from '@mysten/ledger-signer'
 import { SuiGrpcClient } from '@mysten/sui/grpc'
@@ -10,6 +11,19 @@ import { useEffect, useState } from 'react'
 import { LEDGER_PATH, explainLedgerError } from '@/lib/ledger'
 
 const FULLNODE = 'https://fullnode.testnet.sui.io:443'
+
+/**
+ * USB or Bluetooth — the transport is independent of the app. The Sui app speaks APDUs and does
+ * not care how they arrive, so the SAME official app works over BLE with no cable and no custom
+ * firmware. BLE needs a Nano X, Flex or Stax; the original Nano S+ is USB-only.
+ */
+type Link = 'usb' | 'ble'
+
+function openTransport(link: Link) {
+  // Whichever we use, this call must be the FIRST await in a click handler: both requestDevice
+  // APIs need transient user activation, and any preceding await consumes it.
+  return link === 'ble' ? TransportWebBLE.create() : TransportWebHID.request()
+}
 
 /**
  * Ledger signing test bench. Two independent things:
@@ -45,6 +59,7 @@ export default function TestPage() {
   const [pending, setPending] = useState<Pending[]>([])
   const [busy, setBusy] = useState(false)
   const [expiredCount, setExpiredCount] = useState(0)
+  const [link, setLink] = useState<Link>('usb')
 
   const say = (s: string) => setLog((l) => [...l, s])
 
@@ -57,6 +72,7 @@ export default function TestPage() {
       `secure context : ${typeof window !== 'undefined' && window.isSecureContext ? 'yes' : 'NO — WebHID needs https or localhost'}`,
       `origin         : ${typeof location !== 'undefined' ? location.origin : '?'}`,
       `navigator.hid  : ${hasHid ? 'present' : 'MISSING — use desktop Chrome, Edge or Opera'}`,
+      `navigator.bluetooth : ${typeof navigator !== 'undefined' && 'bluetooth' in navigator ? 'present' : 'MISSING — Bluetooth link unavailable here'}`,
     ]
     setEnv(lines)
     if (hasHid) {
@@ -91,10 +107,10 @@ export default function TestPage() {
   async function checkDevice() {
     setBusy(true)
     setLog([])
-    let transport: Awaited<ReturnType<typeof TransportWebHID.request>> | null = null
+    let transport: Awaited<ReturnType<typeof openTransport>> | null = null
     try {
       say('Requesting device… (pick your Ledger in the browser prompt)')
-      transport = await TransportWebHID.request() // FIRST await. Nothing may precede it.
+      transport = await openTransport(link) // FIRST await. Nothing may precede it.
       const app = new Sui(transport)
       const v = await app.getVersion()
       say(`Sui app version ${v.major}.${v.minor}.${v.patch}`)
@@ -120,9 +136,9 @@ export default function TestPage() {
   async function signApproval(p: Pending) {
     setBusy(true)
     setLog([])
-    let transport: Awaited<ReturnType<typeof TransportWebHID.request>> | null = null
+    let transport: Awaited<ReturnType<typeof openTransport>> | null = null
     try {
-      transport = await TransportWebHID.request()
+      transport = await openTransport(link)
       const bytes = b64ToBytes(p.tx_bytes_b64)
 
       // Use the OFFICIAL signer rather than driving the app class by hand. It does three things
@@ -183,9 +199,9 @@ export default function TestPage() {
         device while it is running. Unlock the device and open the Sui app.
       </p>
 
-      {supported === false && (
+      {supported === false && link === 'usb' && (
         <p className="mt-6 rounded-md bg-amber-50 p-3 text-sm text-amber-900">
-          This browser has no WebHID. Use desktop Chrome, Edge or Opera.
+          This browser has no WebHID. Use desktop Chrome, Edge or Opera — or switch to Bluetooth.
         </p>
       )}
 
@@ -197,7 +213,20 @@ export default function TestPage() {
 
       <section className="mt-8">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">1 · Device check</h2>
-        <button onClick={checkDevice} disabled={busy || supported === false}
+        <div className="mb-3 flex gap-2 text-sm">
+          {(['usb', 'ble'] as Link[]).map((l) => (
+            <button key={l} onClick={() => setLink(l)}
+              className={`rounded-full border px-3 py-1 ${link === l ? 'border-black bg-black text-white' : 'border-zinc-300'}`}>
+              {l === 'usb' ? 'USB cable' : 'Bluetooth'}
+            </button>
+          ))}
+          <span className="self-center text-xs text-zinc-500">
+            {link === 'ble'
+              ? 'Nano X, Flex or Stax. Pair the device in Bluetooth settings first.'
+              : 'Any supported device. Quit Ledger Live first.'}
+          </span>
+        </div>
+        <button onClick={checkDevice} disabled={busy || (link === 'usb' && supported === false)}
           className="rounded-full bg-black px-5 py-2 text-sm font-medium text-white disabled:opacity-40">
           {busy ? 'Working…' : 'Check my Ledger'}
         </button>

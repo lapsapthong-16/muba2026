@@ -17,6 +17,7 @@
     "demo": "tsx --env-file=.env scripts/demo.mts"
   },
   "dependencies": {
+    "@ledgerhq/hw-transport-web-ble": "^6.35.0",
     "@ledgerhq/hw-transport-webhid": "^6.36.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@mysten/deepbook-v3": "^2.1.4",
