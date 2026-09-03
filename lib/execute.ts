@@ -53,7 +53,15 @@ export async function executeFromSpending(accountId: string, frozen: FrozenTx): 
   const c = committees(accountId)
   const partial = await platformPartial(accountId, frozen.bytes)
   const signature = await combineAndVerify(c.spending, [partial], frozen.bytes)
-  return broadcast(frozen.bytes, [signature])
+  return broadcast(frozen.bytes, withSponsor(signature, frozen))
+}
+
+/**
+ * A sponsored transaction needs TWO signatures: ours over the whole transaction, and the sponsor's
+ * over the gas half. Order matters — the sender's signature comes first.
+ */
+function withSponsor(ours: string, frozen: FrozenTx): string[] {
+  return frozen.sponsorSignature ? [ours, frozen.sponsorSignature] : [ours]
 }
 
 /**
@@ -75,7 +83,7 @@ export async function executeFromProtected(
   const c = committees(accountId)
   const partial = await platformPartial(accountId, frozen.bytes)
   const signature = await combineAndVerify(c.protected, [partial, ledgerPartial], frozen.bytes)
-  return broadcast(frozen.bytes, [signature])
+  return broadcast(frozen.bytes, withSponsor(signature, frozen))
 }
 
 async function broadcast(bytes: Uint8Array, signatures: string[]): Promise<ExecResult> {

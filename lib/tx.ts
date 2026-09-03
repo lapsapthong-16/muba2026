@@ -3,96 +3,125 @@ import { createHash } from 'node:crypto'
 import { getSuiClient, SUI_TYPE } from './sui'
 
 /**
- * Build a transaction ONCE and freeze it. Everything downstream — simulation, evidence, the
- * verdict, both signatures — is bound to these exact bytes.
+ * @shinami/clients/sui is ESM-only — its exports map has no `require` entry, and its CJS build is
+ * unusable anyway because a transitive dep (@open-rpc/client-js) declares no CJS main. A static
+ * import therefore breaks any tool that resolves this file as CJS, which tsx does. A dynamic
+ * import loads real ESM from either context.
+ */
+async function shinami() {
+  return import('@shinami/clients/sui')
+}
+
+/**
+ * Build a transaction, get Shinami to sponsor the gas, and freeze the result.
  *
- * Why once, and never rebuilt: with an empty gas payment the SDK injects a random u32 into the
- * ValidDuring expiration, so two builds of the same logical transaction produce DIFFERENT bytes.
- * A design that stores an intent and rebuilds it after human approval would sign something other
- * than what was scored. Pin explicit gas coins and keep the Uint8Array.
+ * ORDERING IS THE WHOLE POINT. Sponsorship REPLACES the bytes: a gasless transaction is txKind
+ * only (verified: 140 bytes, no gas data at all), and Shinami returns a complete 424-byte
+ * transaction with gasData filled in. So the freeze happens AFTER sponsorship, on the bytes that
+ * will actually execute. Freezing before would bind us to bytes Shinami then discards, silently
+ * breaking "the bytes that were scored are the bytes that get signed".
  *
- * Also: tx.getDigest() returns a PROMISE in 2.29. Not awaiting it writes the literal string
- * "Promise { <pending> }" into your audit log and your approval card.
+ * NOTHING MAY REFERENCE tx.gas. In a sponsored transaction gasData.owner is Shinami, so tx.gas is
+ * THEIR coin — splitting or transferring it would move the sponsor's money, not the wallet's. It is
+ * not even constructible: buildGaslessTransaction rejects it with "Invalid params", because there
+ * is no gas coin at build time. Every builder below sources from the wallet's own Coin<SUI> objects.
+ *
+ * Verified live: Shinami sponsors a MULTISIG sender without complaint, and the resulting balance
+ * changes are agent -10,000,000 / sponsor -2,007,760 (gas) / recipient +10,000,000.
  */
 
 export interface FrozenTx {
   bytes: Uint8Array
-  /** sha256 of the built bytes. Re-checked immediately before every signature. */
+  /** sha256 of the final bytes. Re-checked immediately before every signature. */
   sha256: string
-  /** The offline digest — what the Ledger shows and what an explorer will show. */
+  /** The offline digest — what an explorer shows and what the Ledger displays. */
   digest: string
   sender: string
-}
-
-async function freeze(tx: Transaction, sender: string): Promise<FrozenTx> {
-  const bytes = await tx.build({ client: getSuiClient() })
-  const digest = await tx.getDigest() // a Promise in 2.29 — await it
-  return { bytes, sha256: sha256(bytes), digest, sender }
+  /** Shinami's signature over the gas half. Absent when we fell back to self-paid. */
+  sponsorSignature?: string
+  gasPaidBySponsor: boolean
 }
 
 export function sha256(b: Uint8Array): string {
   return createHash('sha256').update(b).digest('hex')
 }
 
+function hasGasStation(): boolean {
+  return !!process.env.SHINAMI_GAS_STATION_ACCESS_KEY
+}
+
+/** The wallet's own SUI coin objects, newest first. Never the gas coin. */
+async function ownedSuiCoins(owner: string): Promise<{ objectId: string; version: string; digest: string }[]> {
+  const res = (await getSuiClient().core.listOwnedObjects({
+    owner,
+    type: `0x2::coin::Coin<${SUI_TYPE}>`,
+  })) as { objects?: { objectId: string; version: string | number; digest: string }[] }
+  return (res.objects ?? []).map((o) => ({ objectId: o.objectId, version: String(o.version), digest: o.digest }))
+}
+
+type Build = (tx: Transaction, coins: { objectId: string }[]) => void
+
 /**
- * Pin real gas coins when the wallet holds any.
- *
- * A Sui address can hold SUI two ways, and this caught us out: as `Coin<SUI>` OBJECTS, or as a
- * SIP-58 ADDRESS BALANCE in the accumulator. Measured on a live wallet holding 1.647 SUI:
- *   coinBalance: 0, addressBalance: 1647069908
- * so `listOwnedObjects` correctly returned nothing and an earlier version of this function threw
- * "No SUI coins to pay gas with" on a perfectly well-funded wallet.
- *
- * When there are no coin objects we simply do not call setGasPayment and let the node select gas
- * from the address balance — verified working. Pinning is still preferred where possible, because
- * an EMPTY gas payment injects a random ValidDuring nonce and makes rebuilt bytes non-reproducible;
- * leaving gas UNSET is not the same thing as setting it to [].
+ * Sponsor if we can, self-pay if we cannot. A gas station outage should degrade the wallet, not
+ * brick it — but the two paths produce DIFFERENT spend arithmetic, which is why FrozenTx carries
+ * gasPaidBySponsor and the evidence layer reads it back off the built transaction.
  */
-async function pinGas(tx: Transaction, sender: string): Promise<void> {
+async function buildAndFreeze(sender: string, build: Build): Promise<FrozenTx> {
   const client = getSuiClient()
-  let objects: unknown[] = []
-  try {
-    const res = await client.core.listOwnedObjects({ owner: sender, type: `0x2::coin::Coin<${SUI_TYPE}>` })
-    objects = (res as { objects?: unknown[] }).objects ?? []
-  } catch {
-    /* fall through to node gas selection */
+  const coins = await ownedSuiCoins(sender)
+  if (!coins.length) {
+    throw new Error(
+      `No SUI coin objects at ${sender}. Fund it with \`npm run fund -- ${sender} 0.2\` (twice, so ` +
+        `there are at least two coins).`
+    )
   }
-  const coins = objects.slice(0, 8).map((o) => {
-    const c = o as { objectId?: string; id?: string; version: string | number; digest: string }
-    return { objectId: (c.objectId ?? c.id)!, version: String(c.version), digest: c.digest }
-  })
-  if (coins.length) tx.setGasPayment(coins)
-  // else: leave gas unset. The node selects from the address balance.
-}
 
-/** DEMO 2 — "transfer all my funds to <address>". The verified Sui drain shape. */
-export async function buildTransferAll(sender: string, to: string): Promise<FrozenTx> {
+  if (hasGasStation()) {
+    try {
+      const { GasStationClient, buildGaslessTransaction } = await shinami()
+      const gas = new GasStationClient(process.env.SHINAMI_GAS_STATION_ACCESS_KEY!)
+      const gasless = await buildGaslessTransaction((tx: Transaction) => build(tx, coins), {
+        sender,
+        gasBudget: 10_000_000,
+        sui: client,
+      })
+      const sp = await gas.sponsorTransaction(gasless)
+      const bytes = Uint8Array.from(Buffer.from(sp.txBytes, 'base64'))
+      // Recover the digest from the FINAL bytes, not from our pre-sponsorship builder.
+      const digest = await Transaction.from(bytes).getDigest()
+      return { bytes, sha256: sha256(bytes), digest, sender, sponsorSignature: sp.signature, gasPaidBySponsor: true }
+    } catch (e) {
+      console.warn('[gas station] sponsorship failed, falling back to self-paid:', (e as Error).message?.slice(0, 140))
+    }
+  }
+
+  // Self-paid fallback. Gas is left UNSET so the node selects — from coin objects or from a SIP-58
+  // address balance. Note that is not the same as setGasPayment([]), which injects a random nonce.
   const tx = new Transaction()
   tx.setSender(sender)
-  await pinGas(tx, sender)
-  // tx.gas IS the wallet's SUI. Transferring it moves everything not reserved for gas.
-  tx.transferObjects([tx.gas], to)
-  return freeze(tx, sender)
+  build(tx, coins)
+  const bytes = await tx.build({ client })
+  const digest = await tx.getDigest() // a Promise in 2.29 — await it
+  return { bytes, sha256: sha256(bytes), digest, sender, gasPaidBySponsor: false }
 }
 
-/** A bounded transfer — split first, so only `amount` moves. */
+/** A bounded transfer, sourced from the wallet's own coin — never from tx.gas. */
 export async function buildTransfer(sender: string, to: string, amountMist: bigint): Promise<FrozenTx> {
-  const tx = new Transaction()
-  tx.setSender(sender)
-  await pinGas(tx, sender)
-  const [coin] = tx.splitCoins(tx.gas, [amountMist])
-  tx.transferObjects([coin], to)
-  return freeze(tx, sender)
+  return buildAndFreeze(sender, (tx, coins) => {
+    const [coin] = tx.splitCoins(tx.object(coins[0].objectId), [amountMist])
+    tx.transferObjects([coin], to)
+  })
 }
 
-/** Test-only: build against an unfunded address. Requires simulate({doGasSelection:false}). */
-export async function buildTransferUnfunded(sender: string, to: string, amountMist: bigint): Promise<FrozenTx> {
-  const tx = new Transaction()
-  tx.setSender(sender)
-  tx.setGasBudget(10_000_000)
-  tx.setGasPrice(1000)
-  tx.setGasPayment([]) // budget + price + empty payment. All three, or build() throws.
-  const [coin] = tx.splitCoins(tx.gas, [amountMist])
-  tx.transferObjects([coin], to)
-  return freeze(tx, sender)
+/**
+ * "Transfer all my funds" — the drain. Merges every coin object into the first and sends it, which
+ * under sponsorship really is the whole balance: with gas covered by Shinami the wallet needs no
+ * reserve, so there is nothing left behind.
+ */
+export async function buildTransferAll(sender: string, to: string): Promise<FrozenTx> {
+  return buildAndFreeze(sender, (tx, coins) => {
+    const primary = tx.object(coins[0].objectId)
+    if (coins.length > 1) tx.mergeCoins(primary, coins.slice(1).map((c) => tx.object(c.objectId)))
+    tx.transferObjects([primary], to)
+  })
 }
