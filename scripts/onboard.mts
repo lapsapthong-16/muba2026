@@ -49,9 +49,31 @@ ${b.setup_url}
    hard cap and is blocked outright instead of escalating to your device.
 
 ──────────────────────────────────────────────────────────────────────
- 4. AGENT CONFIG  (~/.hermes/config.yaml)
+ 4. CONNECT YOUR AGENT — pick the one you use
 ──────────────────────────────────────────────────────────────────────
-${b.config_yaml}
+ CLAUDE CODE  — .mcp.json in your project root (or ~/.claude.json):
+   {
+     "mcpServers": {
+       "hermes-wallet": {
+         "type": "http",
+         "url": "${base}/api/mcp",
+         "headers": { "Authorization": "Bearer ${b.bearer}" }
+       }
+     }
+   }
+   or:  claude mcp add --transport http hermes-wallet ${base}/api/mcp \\
+          --header "Authorization: Bearer ${b.bearer}"
+
+ CODEX  — ~/.codex/config.toml:
+   [mcp_servers.hermes_wallet]
+   url = "${base}/api/mcp"
+   http_headers = { Authorization = "Bearer ${b.bearer}" }
+
+ HERMES  — ~/.hermes/config.yaml:
+${b.config_yaml.split('\n').map((l) => (l ? '   ' + l : l)).join('\n')}
+ ANY AGENT that speaks plain HTTP can skip MCP entirely and POST to
+ ${base}/api/check with that same bearer.
+
 ──────────────────────────────────────────────────────────────────────
  5. OR DRIVE IT BY HAND
 ──────────────────────────────────────────────────────────────────────
