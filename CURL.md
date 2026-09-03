@@ -82,6 +82,19 @@ curl -sX POST $BASE/api/setup/bearer -H "Cookie: hw_session=$TOKEN"
 
 This rotates: the old bearer stops working immediately, which is also how you revoke a leaked one.
 
+**Get told when something is waiting.** Point the wallet at any URL that accepts a JSON POST —
+Slack, Discord, ntfy, your own script. Only settable from a browser session, because an agent that
+could redirect its own alerts would be choosing who watches it.
+
+```bash
+curl -sX POST $BASE/api/setup/policy -H "Cookie: hw_session=$TOKEN" \
+  -H 'content-type: application/json' -d '{"notifyUrl":"https://hooks.slack.com/…"}'
+```
+
+The message carries a **decline** link that works from any device with no session, and no approve
+link — approving needs the Ledger, so it needs a desktop browser. That asymmetry is deliberate: the
+worst a stolen notification can do is refuse a payment that was already being questioned.
+
 **Read the state** — human view (`Cookie`) or agent view (`Bearer`, via `wallet_status`):
 
 ```bash

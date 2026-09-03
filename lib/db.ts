@@ -82,6 +82,22 @@ function migrate(d: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS spend_window ON spend_ledger(account_id, coin_type, created_at);
   `)
+
+  /**
+   * Additive migrations. ALTER TABLE ADD COLUMN has no IF NOT EXISTS in SQLite, so each is tried
+   * and its duplicate-column error swallowed — cheap, and it keeps an existing database (with a
+   * real wallet and real history in it) working across a schema change instead of demanding a
+   * wipe.
+   */
+  for (const stmt of [
+    // Where to tell the human something is waiting. Any URL that accepts a JSON POST: Slack,
+    // Discord, ntfy, a personal script.
+    'ALTER TABLE wallets ADD COLUMN notify_url TEXT',
+    // Single-use, hashed. Lets a notification carry a one-tap DECLINE from any device.
+    'ALTER TABLE decisions ADD COLUMN decline_token_hash TEXT',
+  ]) {
+    try { d.exec(stmt) } catch { /* already applied */ }
+  }
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000

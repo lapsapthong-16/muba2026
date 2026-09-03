@@ -24,6 +24,7 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => null)) as {
     mode?: string
+    notifyUrl?: string | null
     perTxSui?: number
     weeklySui?: number
     allowedRecipients?: { address: string; label: string }[]
@@ -85,6 +86,16 @@ export async function POST(req: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Invalid policy'
     return Response.json({ error: msg.slice(0, 400) }, { status: 400 })
+  }
+
+  // Where to tell the owner something is waiting. Only settable here, which means only from a
+  // browser session — an agent that could redirect its own alerts would be choosing who watches it.
+  if (body.notifyUrl !== undefined) {
+    const u = body.notifyUrl?.trim() || null
+    if (u && !/^https?:\/\//i.test(u)) {
+      return Response.json({ error: 'notifyUrl must be an http(s) URL.' }, { status: 400 })
+    }
+    db.prepare('UPDATE wallets SET notify_url=? WHERE account_id=?').run(u, accountId)
   }
 
   db.prepare('UPDATE wallets SET policy_json=?, policy_version=? WHERE account_id=?').run(

@@ -4,6 +4,7 @@ import { getBalance, SUI_TYPE, SUI_DECIMALS } from './sui'
 import { buildTransfer, buildTransferAll, buildSwap, quoteSwap, type FrozenTx } from './tx'
 import { executeFromSpending, recordSpend } from './execute'
 import { MODES, DEFAULT_MODE, modeTable } from './policy/modes'
+import { notify } from './notify'
 import { simulate } from './evidence'
 import { PolicySchema, evaluate, type Policy } from './policy/policy'
 import { requestBallot } from './ballot'
@@ -302,6 +303,13 @@ export async function submitTransfer(
     const decision2 = gate(sim2, verdict2, ballot)
 
     const id = record(accountId, escalated, decision2, sim2, intent, w, 'pending')
+    // Not awaited: a slow webhook must not add its latency to a payment the agent is waiting on,
+    // and a delivery failure must never fail an escalation that is already safely recorded.
+    notify(accountId, {
+      decisionId: id, intent, rule: decision.rule, reasons: decision.reasons,
+      riskScore: decision2.ballotScore ?? null, from: w.m_address,
+      expiresInSeconds: APPROVAL_TTL_MS / 1000,
+    })
     return {
       outcome: 'awaiting_approval', funds_moved: false, approval_id: id, rule: decision.rule,
       reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
@@ -518,6 +526,11 @@ export async function submitSwap(
     const decision2 = gate(sim2, verdict2, ballot)
 
     const id = record(accountId, escalated, decision2, sim2, intent, w, 'pending')
+    notify(accountId, {
+      decisionId: id, intent, rule: decision.rule, reasons: decision.reasons,
+      riskScore: decision2.ballotScore ?? null, from: w.m_address,
+      expiresInSeconds: APPROVAL_TTL_MS / 1000,
+    })
     return {
       outcome: 'awaiting_approval', funds_moved: false, approval_id: id,
       rule: decision.rule, reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
