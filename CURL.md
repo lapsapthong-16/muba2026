@@ -1,5 +1,14 @@
 # Every flow, as curl
 
+**Or just paste this at your agent:**
+
+> Set up my Puffer wallet: onboard me, print the setup link, and tell me what to do next.
+
+It stops there by design — the agent cannot connect your Ledger or choose your limits. The rest of
+this page is what it runs on your behalf, and what you run yourself.
+
+---
+
 For hermes, Codex or Claude Code. Two credentials, and they never mix:
 
 | | Who holds it | Sent as | Can |
@@ -48,9 +57,13 @@ curl -sX POST $BASE/api/setup/ledger \
 ```bash
 curl -sX POST $BASE/api/setup/policy \
   -H "Cookie: hw_session=$TOKEN" -H 'content-type: application/json' \
-  -d '{"perTxSui":0.005,"weeklySui":5,
-       "allowedRecipients":[{"address":"0x1111…1111","label":"friend"}]}'
+  -d '{"mode":"reef","allowedRecipients":[{"address":"0x1111…1111","label":"friend"}]}'
 ```
+
+**Pick a word, not four numbers.** `reef` pays only addresses you name (2.5 SUI per transaction,
+10 weekly); `open_water` pays anyone (10 / 50) and leans on simulation and the risk model instead.
+Both simulate everything and both escalate a high score. Explicit `perTxSui` / `weeklySui` still
+override the preset if you want them. `wallet_status` returns the full table.
 
 **Fund it.** H is the float, M backs escalations. Testnet's HTTP faucet is IP-blocked, so:
 

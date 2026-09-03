@@ -2,6 +2,7 @@ import { getDb } from '@/lib/db'
 import { requireHuman, authErrorResponse } from '@/lib/auth'
 import { PolicySchema } from '@/lib/policy/policy'
 import { SUI_TYPE, DEEPBOOK_PACKAGE } from '@/lib/sui'
+import { MODES, isModeName, policyFromMode, DEFAULT_MODE } from '@/lib/policy/modes'
 
 export const runtime = 'nodejs'
 
@@ -22,6 +23,7 @@ export async function POST(req: Request) {
   }
 
   const body = (await req.json().catch(() => null)) as {
+    mode?: string
     perTxSui?: number
     weeklySui?: number
     allowedRecipients?: { address: string; label: string }[]
@@ -41,18 +43,32 @@ export async function POST(req: Request) {
   // Number("100000000000000001") silently loses a unit.
   const toMist = (sui: number) => BigInt(Math.round(sui * 1e9)).toString()
 
+  // A named mode fills in every number, and explicit figures still win over it — so "reef, but
+  // 5 SUI per transaction" is expressible. Picking a word is the path we expect people to take;
+  // typing four figures they have no basis for choosing is the path that produced a 0.0025 SUI
+  // limit on a book whose smallest fillable trade is 1.1 SUI.
+  if (body.mode !== undefined && !isModeName(body.mode)) {
+    return Response.json(
+      { error: `Unknown mode "${body.mode}". Choose ${Object.keys(MODES).join(' or ')}.` },
+      { status: 400 }
+    )
+  }
+  const mode = isModeName(body.mode) ? body.mode : DEFAULT_MODE
+  const preset = policyFromMode(mode, { allowedRecipients: body.allowedRecipients })
+
   let policy
   try {
     policy = PolicySchema.parse({
       version: w.policy_version + 1,
       walletAddress: w.h_address,
+      mode,
       caps: [
         {
           coinType: SUI_TYPE,
           symbol: 'SUI',
           decimals: 9,
-          perTxLimit: toMist(body.perTxSui ?? 1),
-          weeklyLimit: toMist(body.weeklySui ?? 10),
+          perTxLimit: body.perTxSui !== undefined ? toMist(body.perTxSui) : preset.caps[0].perTxLimit,
+          weeklyLimit: body.weeklySui !== undefined ? toMist(body.weeklySui) : preset.caps[0].weeklyLimit,
         },
       ],
       allowedRecipients: body.allowedRecipients ?? [],
@@ -79,5 +95,5 @@ export async function POST(req: Request) {
   // Any decision scored under the old limits is void.
   db.prepare("UPDATE decisions SET state='expired' WHERE account_id=? AND state='pending'").run(accountId)
 
-  return Response.json({ ok: true, policy_version: policy.version, policy })
+  return Response.json({ ok: true, policy_version: policy.version, mode, mode_summary: MODES[mode].summary, policy })
 }

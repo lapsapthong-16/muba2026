@@ -42,6 +42,12 @@ export const AllowedPackageSchema = z.object({
 export const PolicySchema = z.object({
   version: z.number().int().positive(),
   walletAddress: SuiAddress,
+  /**
+   * Which named preset this policy came from. Optional so every policy written before modes
+   * existed still parses — absent means 'reef', the cautious reading, which is the only safe
+   * default for a field that governs whether a rule fires.
+   */
+  mode: z.enum(['reef', 'open_water']).optional(),
   caps: z.array(CoinCapSchema).min(1),
   allowedRecipients: z.array(AllowedRecipientSchema),
   allowedPackages: z.array(AllowedPackageSchema).min(1),
@@ -168,9 +174,16 @@ export function evaluate(policy: Policy, ev: Evidence, spent: SpentLast7d): Verd
       seenRecipients.add(addr)
     }
   }
-  for (const r of recipients) {
-    if (!allowed.has(r)) {
-      reasons.push({ rule: 'UNKNOWN_RECIPIENT', verdict: 'require_approval', human: `Money is going to ${r.slice(0, 6)}…${r.slice(-4)}, an address that is not on your approved list.` })
+  // Open Water deliberately does not gate on the payee — that is the whole difference between the
+  // two modes, and the human chose it by name. Everything else still runs: the per-transaction
+  // limit, the weekly cap, the capability check, the simulation, and the risk model, which is what
+  // actually catches a drain to a stranger once this rule is off. And an abstaining model
+  // escalates, so the permissive mode fails closed rather than open.
+  if (policy.mode !== 'open_water') {
+    for (const r of recipients) {
+      if (!allowed.has(r)) {
+        reasons.push({ rule: 'UNKNOWN_RECIPIENT', verdict: 'require_approval', human: `Money is going to ${r.slice(0, 6)}…${r.slice(-4)}, an address that is not on your approved list.` })
+      }
     }
   }
 

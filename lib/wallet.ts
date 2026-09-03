@@ -3,6 +3,7 @@ import { getDb } from './db'
 import { getBalance, SUI_TYPE, SUI_DECIMALS } from './sui'
 import { buildTransfer, buildTransferAll, buildSwap, quoteSwap, type FrozenTx } from './tx'
 import { executeFromSpending, recordSpend } from './execute'
+import { MODES, DEFAULT_MODE, modeTable } from './policy/modes'
 import { simulate } from './evidence'
 import { PolicySchema, evaluate, type Policy } from './policy/policy'
 import { requestBallot } from './ballot'
@@ -47,6 +48,9 @@ const ESCALATION_BUDGET_MS = 30_000
  * before signing, so a stale one is caught by chain state rather than by this clock.
  */
 const APPROVAL_TTL_MS = 30 * 60 * 1000
+
+/** Below this the protected address cannot fund a rebuilt escalation at all. */
+const ESCALATION_FLOOR = 5_000_000n
 
 export interface WalletRow {
   account_id: string
@@ -109,27 +113,115 @@ export async function walletStatus(accountId: string): Promise<Record<string, un
     .prepare("SELECT id, intent, created_at FROM decisions WHERE account_id=? AND state='pending' AND expires_at > ?")
     .all(accountId, Date.now())
 
+  /**
+   * PREFLIGHT — our answer to `mm doctor`.
+   *
+   * MetaMask makes readiness a first-class, machine-readable thing an agent checks BEFORE it
+   * starts, instead of a failure it discovers three steps in. Ours belongs here rather than in a
+   * separate tool: an agent already calls wallet_status first, so the cheapest place to tell it
+   * "your escalation path is unfunded" is the call it was going to make anyway.
+   *
+   * Every check names a condition that has actually bitten us, not a hypothetical.
+   */
+  const [hBal, mBal] = await Promise.all([
+    getBalance(w.h_address),
+    w.m_address ? getBalance(w.m_address) : Promise.resolve(0n),
+  ])
+  const mode = policy.mode ?? DEFAULT_MODE
+  const weeklyLeft = BigInt(cap.weeklyLimit) - spent
+
+  const checks: { check: string; ok: boolean; detail: string }[] = [
+    {
+      check: 'spending_funded',
+      ok: hBal > 0n,
+      detail: hBal > 0n ? `${fmtSui(hBal)} SUI available to spend.` : 'The spending address is empty, so every payment will fail at build.',
+    },
+    {
+      // An escalation is REBUILT from the protected address. If that address is empty, the
+      // transaction the human is asked to approve cannot be constructed at all, and the agent
+      // gets PROTECTED_UNFUNDED at the worst possible moment — after it has already told its
+      // human something is waiting for them.
+      check: 'escalation_fundable',
+      ok: mBal > ESCALATION_FLOOR,
+      detail: mBal > ESCALATION_FLOOR
+        ? `${fmtSui(mBal)} SUI in the protected address backs escalated payments.`
+        : 'The protected address is empty. Anything needing a Ledger approval cannot even be built — fund it before relying on that path.',
+    },
+    {
+      check: 'weekly_budget_left',
+      ok: weeklyLeft > 0n,
+      detail: `${fmtSui(weeklyLeft)} SUI of the weekly cap remains. This one is a hard stop; hardware cannot widen it.`,
+    },
+    {
+      check: 'has_a_payee',
+      ok: mode === 'open_water' || policy.allowedRecipients.length > 0,
+      detail: mode === 'open_water'
+        ? 'Open Water pays any address, so no payee list is needed.'
+        : policy.allowedRecipients.length > 0
+          ? `${policy.allowedRecipients.length} approved payee(s).`
+          : 'No approved payees, so in Reef every payment will need a Ledger approval. Ask the owner to name who you may pay.',
+    },
+  ]
+
   return {
     outcome: 'ok',
     funds_moved: false,
     wallet_ready: true,
+    ready_to_spend: checks.every((c) => c.ok),
+    preflight: checks,
     spending_address: w.h_address,
     protected_address: w.m_address,
-    balance_sui: fmtSui(await getBalance(w.h_address)),
+    balance_sui: fmtSui(hBal),
+    protected_balance_sui: fmtSui(mBal),
+    mode,
+    mode_summary: MODES[mode].summary,
+    // The whole table, so the agent can tell its human WHICH WORD to say instead of which number
+    // to type. Nothing here lets the agent change the mode — only /api/setup/policy does, and that
+    // route refuses any request carrying an Authorization header.
+    modes_available: modeTable(),
     guardrails: {
       per_transaction_limit_sui: fmtSui(BigInt(cap.perTxLimit)),
       weekly_limit_sui: fmtSui(BigInt(cap.weeklyLimit)),
-      weekly_remaining_sui: fmtSui(BigInt(cap.weeklyLimit) - spent),
+      weekly_remaining_sui: fmtSui(weeklyLeft),
       allowed_recipients: policy.allowedRecipients.map((r) => r.address),
       allowed_packages: policy.allowedPackages.map((p) => p.packageId),
+      always_applies: MODES[mode].stillApplies,
     },
     pending_approvals: pending,
   }
 }
 
+/**
+ * DRY RUN, as a flag rather than a separate endpoint.
+ *
+ * We already had /api/check, and an agent still reached for wallet_transfer to answer "would this
+ * be allowed" — because the tool it wants to call and the tool that answers safely were different
+ * names in different places. MetaMask puts --dry-run on every mutating command, so the safe
+ * rehearsal is one word away from the real thing rather than somewhere else entirely.
+ *
+ * It stops at the gate: built, simulated, scored, judged, and then discarded. No decision row, no
+ * spend debit, no approval for a human to clear.
+ */
+function dryRunResult(
+  decision: GateDecision, sim: unknown, extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    outcome: 'dry_run',
+    funds_moved: false,
+    would: decision.outcome,
+    rule: decision.rule,
+    reasons: decision.reasons,
+    risk: decision.ballotRisk,
+    risk_score: decision.ballotScore,
+    ...extra,
+    note: 'NOTHING HAPPENED. No transaction was signed, no approval was created, nothing was ' +
+      'debited. Call again without dry_run to actually do it.',
+  }
+}
+
 export async function submitTransfer(
   accountId: string,
-  args: { to: string; amount_sui: number | 'all'; reason: string }
+  args: { to: string; amount_sui: number | 'all'; reason: string; dry_run?: boolean }
 ): Promise<Record<string, unknown>> {
   const w = await getWallet(accountId)
   const policy = loadPolicy(w)
@@ -165,6 +257,9 @@ export async function submitTransfer(
   }
 
   const decision = gate(sim, verdict, ballot)
+
+  // Bail BEFORE record(): a rehearsal that leaves a decision row behind is not a rehearsal.
+  if (args.dry_run) return dryRunResult(decision, sim, { from: w.h_address, digest_if_sent: frozen.digest })
 
   if (decision.outcome === 'blocked') {
     record(accountId, frozen, decision, sim, intent, w, 'blocked')
@@ -318,7 +413,7 @@ export async function approvalStatus(
  */
 export async function submitSwap(
   accountId: string,
-  args: { pool?: string; amount_sui: number; reason: string }
+  args: { pool?: string; amount_sui: number; reason: string; dry_run?: boolean }
 ): Promise<Record<string, unknown>> {
   const w = await getWallet(accountId)
   const policy = loadPolicy(w)
@@ -362,6 +457,13 @@ export async function submitSwap(
     ? await requestBallot(sim.evidence, w.h_address, args.reason, ESCALATION_BUDGET_MS)
     : null
   const decision = gate(sim, verdict, ballot)
+
+  if (args.dry_run) {
+    return dryRunResult(decision, sim, {
+      from: w.h_address, digest_if_sent: frozen.digest,
+      quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
+    })
+  }
 
   if (decision.outcome === 'blocked') {
     record(accountId, frozen, decision, sim, intent, w, 'blocked')
@@ -427,5 +529,87 @@ export async function submitSwap(
   } catch (e) {
     return { outcome: 'blocked', funds_moved: false, rule: 'EXECUTION_FAILED',
       reasons: [e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e)] }
+  }
+}
+
+/**
+ * DISCOVERY BEFORE ACTION.
+ *
+ * The strongest habit in MetaMask's guides is that every money flow starts by listing the market:
+ * you never name a venue you have not just looked at. We learned the same lesson the expensive
+ * way — an agent asked for a 1 SUI swap on a book whose smallest fillable size was 1.1, and the
+ * only way to find that out was to try. A quote is cheap; a wasted transaction is not.
+ *
+ * Returns live quotes, so the fill floor is measured now rather than remembered from a comment.
+ * That floor moves with the resting orders and has already changed once under us.
+ */
+export async function listMarkets(sizes: number[] = [1, 1.5, 2, 5]): Promise<Record<string, unknown>> {
+  const pool = 'SUI_DBUSDC'
+  const quotes: { in_sui: number; out: number | null; fillable: boolean }[] = []
+  for (const s of sizes) {
+    try {
+      const q = await quoteSwap(pool, s)
+      quotes.push({ in_sui: s, out: q.quoteOut ?? 0, fillable: !!q.quoteOut && q.quoteOut > 0 })
+    } catch {
+      quotes.push({ in_sui: s, out: null, fillable: false })
+    }
+  }
+  const fillable = quotes.filter((q) => q.fillable)
+  return {
+    outcome: 'ok',
+    funds_moved: false,
+    venue: 'DeepBook v3',
+    pool,
+    pair: 'SUI -> DBUSDC',
+    quotes,
+    smallest_fillable_sui: fillable.length ? fillable[0].in_sui : null,
+    note: fillable.length
+      ? `Sizes below about ${fillable[0].in_sui} SUI match nothing on this book right now. The floor is set by the resting orders, so it moves — quote again rather than remembering this number.`
+      : 'Nothing is fillable at any size tried. The book is empty; do not attempt a swap.',
+  }
+}
+
+/**
+ * What this wallet actually did, with the agent's own stated reason next to the outcome.
+ *
+ * MetaMask joins on-chain history to the intent the caller supplied, and that join is the whole
+ * value: an explorer can show you a digest, but only we know the sentence the agent gave for it.
+ * A human auditing an agent is asking "why", and "why" was never on chain.
+ */
+export function listHistory(accountId: string, limit = 20): Record<string, unknown> {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, state, intent, sender, digest, gonka_request_id, created_at, verdict_json
+         FROM decisions WHERE account_id=? ORDER BY created_at DESC LIMIT ?`
+    )
+    .all(accountId, Math.min(Math.max(limit, 1), 100)) as {
+      id: string; state: string; intent: string; sender: string; digest: string | null
+      gonka_request_id: string | null; created_at: number; verdict_json: string
+    }[]
+
+  return {
+    outcome: 'ok',
+    funds_moved: false,
+    count: rows.length,
+    decisions: rows.map((r) => {
+      let rule: string | null = null
+      let score: number | null = null
+      try {
+        const v = JSON.parse(r.verdict_json) as { rule?: string; ballotScore?: number }
+        rule = v.rule ?? null
+        score = typeof v.ballotScore === 'number' ? v.ballotScore : null
+      } catch { /* a decision row with unreadable verdict json is still worth listing */ }
+      return {
+        id: r.id,
+        state: r.state,
+        why_the_agent_said_it: r.intent,
+        rule,
+        risk_score: score,
+        from: r.sender,
+        ...(r.digest ? { digest: r.digest, explorer: `https://suiscan.xyz/testnet/tx/${r.digest}` } : {}),
+        at: new Date(r.created_at).toISOString(),
+      }
+    }),
+    note: 'state "executed" is the only one where money moved.',
   }
 }

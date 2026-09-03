@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
 import { requireAgent, AuthError } from '@/lib/auth'
-import { getWallet, walletStatus, submitTransfer, submitSwap, approvalStatus } from '@/lib/wallet'
+import { getWallet, walletStatus, submitTransfer, submitSwap, approvalStatus, listMarkets, listHistory } from '@/lib/wallet'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -14,7 +14,7 @@ export const maxDuration = 60
  * Stateless (no sessionIdGenerator): every call re-authenticates from the bearer, so an agent
  * restart costs nothing and there is no session table to get out of sync with the account table.
  *
- * FIVE tools, and the list IS the capability surface. Note what is absent: no tool writes policy,
+ * SEVEN tools, and the list IS the capability surface. Note what is absent: no tool writes policy,
  * no tool approves an approval, and there is no `network` parameter anywhere — a field that does
  * not exist in the schema cannot be prompt-injected or defaulted wrong.
  *
@@ -41,6 +41,20 @@ function buildServer(accountId: string): McpServer {
   )
 
   server.registerTool(
+    'wallet_markets',
+    {
+      title: 'What can actually be traded',
+      description:
+        'Live quotes across several sizes on DeepBook, and the smallest size the book will fill ' +
+        'right now. Call this BEFORE wallet_swap. Small trades match nothing, and the floor moves ' +
+        'with the resting orders — a size that filled yesterday can return zero today, so quote ' +
+        'rather than assume. Reads only; moves nothing.',
+      inputSchema: {},
+    },
+    async () => text(await listMarkets())
+  )
+
+  server.registerTool(
     'wallet_transfer',
     {
       title: 'Send SUI',
@@ -48,14 +62,19 @@ function buildServer(accountId: string): McpServer {
         'Send SUI to an address. COMMITS: on success the money is gone. The transaction is ' +
         'simulated and checked against the owner\'s guardrails first, so it may return ' +
         'awaiting_approval — in which case NOTHING has been sent and you must poll ' +
-        'wallet_approval_status. If you only want to know whether something WOULD be allowed, do ' +
-        'not call this; there is no dry-run flag here.',
+        'wallet_approval_status. To find out whether something WOULD be allowed without doing it, ' +
+        'pass dry_run: true.',
       inputSchema: {
         to: z.string().describe('Recipient Sui address, 0x-prefixed'),
         amount_sui: z
           .union([z.number().positive(), z.literal('all')])
           .describe('Amount in SUI, or the string "all" to send the entire balance'),
         reason: z.string().max(400).describe('Why you are sending this, in one sentence, for the owner to read'),
+        dry_run: z.boolean().optional().describe(
+          'Rehearse it: build, simulate, score and judge, then discard. Nothing is signed, no ' +
+          'approval is created, nothing is debited. Use this to find out whether something WOULD ' +
+          'be allowed before you commit to it.'
+        ),
       },
     },
     async (args) => text(await submitTransfer(accountId, args as never))
@@ -76,6 +95,7 @@ function buildServer(accountId: string): McpServer {
         amount_sui: z.number().positive().describe('How much SUI to sell'),
         pool: z.string().optional().describe('Pool key, default SUI_DBUSDC'),
         reason: z.string().max(400).describe('Why you are trading, in one sentence, for the owner to read'),
+        dry_run: z.boolean().optional().describe('Rehearse it and discard. Nothing is signed or recorded.'),
       },
     },
     async (args) => text(await submitSwap(accountId, args as never))
@@ -96,6 +116,21 @@ function buildServer(accountId: string): McpServer {
       },
     },
     async (args) => text(await approvalStatus(accountId, (args as never as { approval_id: string }).approval_id, (args as never as { wait_ms?: number }).wait_ms ?? 25_000))
+  )
+
+  server.registerTool(
+    'wallet_history',
+    {
+      title: 'What this wallet has done',
+      description:
+        'Past decisions, newest first, each with the reason the agent gave, the rule that decided ' +
+        'it, the risk score and a digest where money actually moved. Use it to check whether you ' +
+        'already did something before doing it again. Reads only.',
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional().describe('How many, default 20'),
+      },
+    },
+    async (args) => text(listHistory(accountId, (args as never as { limit?: number }).limit ?? 20))
   )
 
   server.registerTool(
