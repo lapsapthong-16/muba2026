@@ -159,9 +159,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
   } catch { /* an adjustment offer must never block an approval */ }
 
+  // The card named the rule and the risk but never the remaining budget, so a human had no way to
+  // notice they were approving the payment that would exhaust it.
+  let weekly_remaining_sui: string | null = null
+  try {
+    const pj = getDb().prepare('SELECT policy_json FROM wallets WHERE account_id=?').get(accountId) as { policy_json: string }
+    const pol = PolicySchema.parse(JSON.parse(pj.policy_json))
+    const cap = pol.caps[0]
+    weekly_remaining_sui = fmt(BigInt(cap.weeklyLimit) - spentLast7d(accountId, cap.coinType))
+  } catch { /* informational only */ }
+
   return Response.json({
     description,
     adjustments,
+    weekly_remaining_sui,
     id: row.id,
     state: row.state,
     intent: row.intent,
@@ -239,6 +250,48 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return Response.json(
       { error: `This no longer succeeds on chain (${fresh.kind}), so it was not sent.` },
       { status: 409 }
+    )
+  }
+
+  /**
+   * RE-RUN THE DETERMINISTIC FLOOR, AT THE MOMENT THE MONEY MOVES.
+   *
+   * Everything above re-checks that this is the same transaction: same state, same policy version,
+   * same bytes, same on-chain outcome. None of it re-checks that it is still ALLOWED. A hold is
+   * scored when it is created, and the budget it was scored against can be spent out from under it
+   * while it waits — by the agent, through perfectly legitimate payments that each pass on their
+   * own. The human then taps once and settles a payment the floor would now deny.
+   *
+   * That matters because WEEKLY_CAP is the one rule a hardware approval must never be able to
+   * widen; the guardrails page promises exactly that. A `require_approval` reason is precisely what
+   * the tap is for and still passes here. A `deny` is not tappable, and never was.
+   */
+  try {
+    const pj = getDb().prepare('SELECT policy_json FROM wallets WHERE account_id=?').get(accountId) as
+      | { policy_json: string | null }
+      | undefined
+    if (pj?.policy_json) {
+      const pol = PolicySchema.parse(JSON.parse(pj.policy_json))
+      const now = evaluate({ ...pol, walletAddress: row.sender }, fresh.evidence, (ct) => spentLast7d(accountId, ct))
+      const hard = now.reasons.find((r) => r.verdict === 'deny')
+      if (hard) {
+        getDb().prepare("UPDATE decisions SET state='blocked' WHERE id=?").run(id)
+        return Response.json(
+          {
+            error: hard.human,
+            rule: hard.rule,
+            note: 'Nothing was sent. This was inside your limits when it was held, but no longer is — ' +
+              'other spending has happened since. A hardware approval cannot widen this one.',
+          },
+          { status: 409 }
+        )
+      }
+    }
+  } catch (e) {
+    // A floor we cannot evaluate is a floor we cannot honour. Refuse rather than assume.
+    return Response.json(
+      { error: `Could not re-check your guardrails, so nothing was sent. (${e instanceof Error ? e.message.slice(0, 120) : String(e)})` },
+      { status: 500 }
     )
   }
 
