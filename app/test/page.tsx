@@ -29,6 +29,13 @@ interface Pending {
   expires_in_seconds: number
   tx_bytes_b64: string
   state: string
+  description: {
+    headline: string
+    steps: string[]
+    deviceWillShow: string[]
+    movements: { label: string; amount: string; direction: 'out' | 'in' }[]
+    flags: { category: string; detail: string; severity: 'blocking' | 'review' }[]
+  } | null
 }
 
 export default function TestPage() {
@@ -225,11 +232,64 @@ export default function TestPage() {
         )}
         {pending.map((p) => (
           <div key={p.id} className="mb-3 rounded-lg border border-amber-300 bg-amber-50/50 p-4">
-            <p className="font-medium">{p.intent}</p>
+            <p className="text-base font-semibold">{p.description?.headline ?? p.intent}</p>
             <p className="mt-1 font-mono text-xs text-zinc-600">from {p.from}</p>
-            <ul className="mt-2 list-disc pl-5 text-sm text-zinc-800">
-              {p.reasons.map((r, i) => <li key={i}>{r}</li>)}
-            </ul>
+
+            {p.description && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-md border border-zinc-200 bg-white p-3">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    What this does, step by step
+                  </p>
+                  <ol className="list-decimal pl-4 text-sm text-zinc-800">
+                    {p.description.steps.map((s, i) => <li key={i}>{s}</li>)}
+                  </ol>
+                  <ul className="mt-2 border-t border-zinc-100 pt-2 font-mono text-xs">
+                    {p.description.movements.map((m, i) => (
+                      <li key={i} className={m.direction === 'out' ? 'text-red-700' : 'text-green-700'}>
+                        {m.amount} {m.label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="rounded-md border border-zinc-300 bg-zinc-50 p-3">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    What your Ledger will show
+                  </p>
+                  <ul className="list-disc pl-4 text-sm text-zinc-800">
+                    {p.description.deviceWillShow.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                  <p className="mt-2 text-xs text-zinc-500">
+                    The device only displays what it worked out from the bytes itself — it will not
+                    show this description, because a wallet that displayed text sent by a computer
+                    could be lied to. Your job is to check the two agree.
+                  </p>
+                </div>
+              </div>
+            )}
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                Why this needs you
+              </p>
+              <ul className="flex flex-col gap-1.5">
+                {(p.description?.flags?.length
+                  ? p.description.flags
+                  : p.reasons.map((r) => ({ category: 'Flagged', detail: r, severity: 'review' as const }))
+                ).map((f, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm">
+                    <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+                      f.severity === 'blocking' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-900'
+                    }`}>
+                      {f.severity === 'blocking' ? 'blocks' : 'review'}
+                    </span>
+                    <span>
+                      <strong className="font-medium">{f.category}</strong>
+                      <span className="block text-zinc-600">{f.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
             <p className="mt-2 text-xs text-zinc-500">
               [{p.rule}] · expires in {p.expires_in_seconds}s · this address needs your device as a
               second signature; our key alone cannot move it

@@ -3,6 +3,7 @@ import { requireHuman, authErrorResponse } from '@/lib/auth'
 import { executeFromProtected, recordSpend } from '@/lib/execute'
 import { sha256 } from '@/lib/tx'
 import { simulate } from '@/lib/evidence'
+import { describe } from '@/lib/describe'
 
 export const runtime = 'nodejs'
 
@@ -47,7 +48,25 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!row) return Response.json({ error: 'No such decision.' }, { status: 404 })
 
   const decision = JSON.parse(row.verdict_json)
+  const stored = JSON.parse(row.evidence_json) as { sim?: { evidence?: unknown } }
+  const evidence = (stored?.sim as { evidence?: unknown })?.evidence
+  let description = null
+  try {
+    if (evidence) {
+      description = describe(
+        Uint8Array.from(Buffer.from(row.tx_bytes_b64, 'base64')),
+        evidence as never,
+        row.sender,
+        decision.rule,
+        decision.reasons ?? []
+      )
+    }
+  } catch {
+    /* a missing description must never block an approval */
+  }
+
   return Response.json({
+    description,
     id: row.id,
     state: row.state,
     intent: row.intent,
