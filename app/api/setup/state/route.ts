@@ -34,9 +34,17 @@ export async function GET(req: Request) {
     .prepare("SELECT id FROM decisions WHERE account_id=? AND state='pending' AND expires_at > ? ORDER BY created_at DESC")
     .all(accountId, Date.now()) as { id: string }[]
 
+  // Count recently-expired ones separately. Showing nothing at all when approvals HAVE been
+  // created reads as "the device is broken" rather than "you missed the window", which is the
+  // wrong thing to debug.
+  const expired = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM decisions WHERE account_id=? AND state='pending' AND expires_at <= ?")
+    .get(accountId, Date.now()) as { n: number }
+
   return Response.json({
     network: NETWORK,
     pending_ids: pending.map((p) => p.id),
+    expired_count: expired.n,
     spending_address: w.h_address || null,
     protected_address: w.m_address,
     ledger_address: w.ledger_address,

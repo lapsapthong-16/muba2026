@@ -35,6 +35,7 @@ export default function TestPage() {
   const [device, setDevice] = useState<{ address: string; version: string } | null>(null)
   const [pending, setPending] = useState<Pending[]>([])
   const [busy, setBusy] = useState(false)
+  const [expiredCount, setExpiredCount] = useState(0)
 
   const say = (s: string) => setLog((l) => [...l, s])
 
@@ -66,6 +67,7 @@ export default function TestPage() {
     const r = await fetch('/api/setup/state')
     if (!r.ok) return say('No session — open your setup link first.')
     const s = await r.json()
+    setExpiredCount(s.expired_count ?? 0)
     const ids: string[] = s.pending_ids ?? []
     const rows = await Promise.all(
       ids.map(async (id) => {
@@ -206,9 +208,17 @@ export default function TestPage() {
           </button>
         </h2>
         {!pending.length && (
-          <p className="text-sm text-zinc-500">
-            None. Have the agent attempt something over your limit, then refresh.
-          </p>
+          <div className="text-sm text-zinc-500">
+            <p>None waiting. Have the agent attempt something over your limit, then refresh.</p>
+            {expiredCount > 0 && (
+              <p className="mt-2 rounded-md bg-amber-50 p-3 text-amber-900">
+                {expiredCount} approval{expiredCount > 1 ? 's' : ''} expired before being signed.
+                Approvals are only valid for 30 minutes — create a fresh one with{' '}
+                <code className="font-mono">npm run demo</code> and approve it while it is still live.
+                This is not a device problem.
+              </p>
+            )}
+          </div>
         )}
         {pending.map((p) => (
           <div key={p.id} className="mb-3 rounded-lg border border-amber-300 bg-amber-50/50 p-4">

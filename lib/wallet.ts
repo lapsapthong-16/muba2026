@@ -32,7 +32,15 @@ import { spentLast7d } from './db'
 
 const ADVISORY_BUDGET_MS = 8_000
 const ESCALATION_BUDGET_MS = 30_000
-const APPROVAL_TTL_MS = 10 * 60 * 1000
+/**
+ * How long a held transaction stays approvable.
+ *
+ * 10 minutes was too tight in practice: unlocking a device, opening the Sui app and reading the
+ * screen is unhurried work, and an approval that quietly vanishes looks like broken hardware
+ * rather than an expiry. 30 minutes is still bounded — the transaction is re-simulated immediately
+ * before signing, so a stale one is caught by chain state rather than by this clock.
+ */
+const APPROVAL_TTL_MS = 30 * 60 * 1000
 
 export interface WalletRow {
   account_id: string
