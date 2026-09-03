@@ -56,7 +56,14 @@ const SELF_PAID_GAS_RESERVE = 5_000_000n
 
 type Build = (tx: Transaction, sponsored: boolean) => void
 
-async function buildAndFreeze(sender: string, build: Build): Promise<FrozenTx> {
+/**
+ * Enough for a transfer, and NOT enough for a DeepBook swap — measured, the swap consumes
+ * 11,502,220 MIST and a sponsored build at 10,000,000 fails simulation with InsufficientGas, which
+ * the gate then reports as SIMULATION_FAILED. Callers that need more say so.
+ */
+const DEFAULT_GAS_BUDGET = 10_000_000
+
+async function buildAndFreeze(sender: string, build: Build, gasBudget = DEFAULT_GAS_BUDGET): Promise<FrozenTx> {
   const client = getSuiClient()
 
   if (hasGasStation()) {
@@ -71,7 +78,7 @@ async function buildAndFreeze(sender: string, build: Build): Promise<FrozenTx> {
           tx.setSender(sender)
           build(tx, true)
         },
-        { sender, gasBudget: 10_000_000, sui: client }
+        { sender, gasBudget, sui: client }
       )
       const sp = await gas.sponsorTransaction(gasless)
       const bytes = Uint8Array.from(Buffer.from(sp.txBytes, 'base64'))
@@ -197,6 +204,15 @@ export async function buildTransferAll(sender: string, to: string): Promise<Froz
  * NOTE ON SIZE. The SUI_DBUSDC book has minSize 1 and lotSize 0.1, but measured live it returns
  * quoteOut 0 for anything under 2 SUI — below that the order matches nothing and the swap is
  * pointless. Quote before building and refuse a zero-output trade rather than signing one.
+ *
+ * WE SUPPLY THE BASE COIN OURSELVES. Left to itself the SDK calls coinWithBalance({type, balance})
+ * with no useGasCoin, and that flag DEFAULTS TO TRUE for SUI — so the resolver looks only at the
+ * address balance and, when that is short, emits a GasCoin input. Under sponsorship the gas coin is
+ * SHINAMI'S, and their RPC rejects the whole transaction with a bare "Invalid params". Since
+ * `npm run fund` delivers coin OBJECTS rather than an address balance, that is the shape every
+ * funded demo wallet is actually in, and the swap would silently self-pay every time. Passing
+ * params.baseCoin short-circuits the default (verified at deepbook.ts:806 — `params.baseCoin ??`),
+ * so sponsorship holds no matter how the wallet was funded.
  */
 export async function buildSwap(
   sender: string,
@@ -205,19 +221,34 @@ export async function buildSwap(
   minOut: number
 ): Promise<FrozenTx> {
   const { DeepBookClient } = await import('@mysten/deepbook-v3')
-  return buildAndFreeze(sender, (tx) => {
+  return buildAndFreeze(
+    sender,
+    (tx, sponsored) => {
     const db = new DeepBookClient({
       address: sender,
       network: 'testnet',
       client: getSuiClient() as never,
     })
     const [baseOut, quoteOut, deepOut] = tx.add(
-      db.deepBook.swapExactBaseForQuote({ poolKey, amount, deepAmount: 0, minOut })
+      db.deepBook.swapExactBaseForQuote({
+        poolKey,
+        amount,
+        deepAmount: 0,
+        minOut,
+        baseCoin: tx.coin({
+          type: SUI_TYPE,
+          balance: BigInt(Math.round(amount * 1e9)),
+          useGasCoin: !sponsored,
+        }),
+      } as never)
     )
     // Everything the pool hands back goes to the wallet. Leaving any of it unconsumed is a
     // compile error, not a silent leak — Move's ability system will not let the PTB close.
     tx.transferObjects([baseOut, quoteOut, deepOut], sender)
-  })
+    },
+    // The swap really costs 11,502,220 MIST. 10,000,000 builds fine and then dies in simulation.
+    30_000_000
+  )
 }
 
 /** Live quote, so we never build a swap the book cannot fill. */

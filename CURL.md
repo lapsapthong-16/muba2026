@@ -59,6 +59,16 @@ npm run fund -- $H 0.5
 npm run fund -- $M 0.5
 ```
 
+**Lost the bearer?** It is stored as a hash and shown once. Re-issue it from the browser session
+rather than re-onboarding — a new account means a new platform key, a different committee, and
+therefore different H and M addresses with your funds stranded at the old ones:
+
+```bash
+curl -sX POST $BASE/api/setup/bearer -H "Cookie: hw_session=$TOKEN"
+```
+
+This rotates: the old bearer stops working immediately, which is also how you revoke a leaked one.
+
 **Read the state** — human view (`Cookie`) or agent view (`Bearer`, via `wallet_status`):
 
 ```bash
