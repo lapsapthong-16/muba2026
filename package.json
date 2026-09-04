@@ -17,7 +17,8 @@
     "demo": "tsx --env-file=.env scripts/demo.mts",
     "check": "tsx --env-file=.env scripts/check.mts",
     "flow": "bash scripts/flow.sh",
-    "connect": "tsx --env-file=.env scripts/connect.mts"
+    "connect": "tsx --env-file=.env scripts/connect.mts",
+    "reset": "tsx --env-file=.env scripts/reset.mts"
   },
   "dependencies": {
     "@ledgerhq/hw-transport-web-ble": "^6.35.0",
