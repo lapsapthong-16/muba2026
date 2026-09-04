@@ -49,7 +49,7 @@ export function IntegrationsSection() {
 }
 
 const workflow = [
-  { number: "1", title: "CONNECT", copy: <>Connect your wallet<br />to Puffer Agent.</>, visual: <div className="terminal-card"><span className="terminal-card__dots"><i /><i /><i /></span><p><b>&gt;_ &nbsp;wallet connected</b><br /><br />&nbsp;&nbsp;&nbsp;network: sui mainnet</p><strong>✓</strong></div> },
+  { number: "1", title: "CONNECT", copy: <>Connect your wallet<br />to Puffer Agent.</>, visual: <div className="terminal-card"><span className="terminal-card__dots"><i /><i /><i /></span><p><b>&gt;_ &nbsp;wallet connected</b><br /><br />&nbsp;&nbsp;&nbsp;network: sui mainnet</p></div> },
   { number: "2", title: "SET RULES", copy: <>Define spend limits<br />and allowlists.</>, visual: <div className="rules-card"><p>Spend limit (24h)</p><div className="rules-card__input">💧 2 SUI <span>⌕</span></div><p>Allowlist</p><div className="allow-list"><b>◉ Scallop</b><b>◉ Cetus</b><b>◉ Turbos</b></div><small>＋ Add address</small></div> },
   { number: "3", title: "LET IT RUN", copy: <>Puffer monitors every move.<br />You stay protected.</>, visual: <div className="alert-card"><p>Transaction detected</p><div className="alert-card__warning">⚠ <span>Unrecognized address<br /><small>sui_unknown...9f2a</small></span></div><ActionButton className="alert-card__action">BLOCK / ALERT</ActionButton></div> },
 ];
@@ -65,8 +65,8 @@ export function HowItWorksSection() {
   </section>;
 }
 
-const reefRows = [["♟", "Recipients", "Allowlisted only", "✓"], ["♨", "Per payment", "2.5 SUI", "2.5 SUI"], ["▣", "Weekly cap", "10 SUI", "10 SUI"]] as const;
-const waterRows = [["♟", "Recipients", "Any recipient", "✓"], ["♨", "Per payment", "10 SUI", "10 SUI"], ["▣", "Weekly cap", "50 SUI", "50 SUI"]] as const;
+const reefRows = [["♟", "Recipients", "Allowlisted only", ""], ["♨", "Per payment", "2.5 SUI", "2.5 SUI"], ["▣", "Weekly cap", "10 SUI", "10 SUI"]] as const;
+const waterRows = [["♟", "Recipients", "Any recipient", ""], ["♨", "Per payment", "10 SUI", "10 SUI"], ["▣", "Weekly cap", "50 SUI", "50 SUI"]] as const;
 
 type ModeRows = readonly (readonly [string, string, string, string])[];
 
@@ -91,7 +91,37 @@ export function ProtectionSection() {
 export function PufferChecksSection() {
   return <section className="landing-section checks-section" aria-labelledby="checks-heading">
     <div className="landing-section__inner"><div className="checks-top"><h2 id="checks-heading" className="landing-display-heading">PUFFER CHECKS<br />EVERY MOVE</h2><div aria-hidden="true" className="checks-fish"><Image src="/assets/puffer/puffer-alert-hd.png" alt="" width={900} height={450} priority /></div></div>
-      <div className="checks-grid"><article className="checks-card"><h3><b>1</b> SIMULATE</h3><p>See the impact before you approve.</p><ul><li>💧 <span>SUI Balance</span><strong>-0.002 SUI</strong></li><li>💧 <span>wSUI Balance</span><strong>+0.010 wSUI</strong></li><li>💲 <span>DBUSDC Balance</span><strong>+2.000 DBUSDC</strong></li><li>☆ <span>Point Balance</span><strong>+15.2 PTS</strong></li></ul></article><article className="checks-card risk-card"><h3><b>2</b> SCORE RISK</h3><p>Puffer scores risk from 0 (safe) to 100 (risky).</p><div className="risk-meter" aria-label="Risk score: 87 out of 100"><span>87<small>HIGH RISK</small></span></div></article><article className="checks-card ledger-card"><h3><b>3</b> APPROVE OR STOP</h3><p>Use your Ledger to continue safely.</p><div className="ledger-logo">⌗ &nbsp; LEDGER</div><ActionButton className="approve-action">✓ &nbsp; APPROVE WITH LEDGER</ActionButton><ActionButton className="stop-action">× &nbsp; STOP TRANSACTION</ActionButton></article></div>
+      <div className="checks-grid">
+        <article className="checks-card simulation-card">
+          <header className="checks-card__header"><span className="checks-step" aria-hidden="true">1</span><div><h3>SIMULATE</h3><p>See the impact before you approve.</p></div></header>
+          <ul className="simulation-list">
+            <li><Image className="asset-icon asset-icon--sui" src="/assets/puffer/sui-logo-hd.png" alt="" width={24} height={24} /><span>SUI Balance</span><strong className="balance-change balance-change--loss">-0.002 SUI</strong></li>
+            <li><Image className="asset-icon asset-icon--wsui" src="/assets/puffer/sui-logo-hd.png" alt="" width={24} height={24} /><span>wSUI Balance</span><strong className="balance-change">+0.010 wSUI</strong></li>
+            <li><span className="asset-icon asset-icon--dbusdc" aria-hidden="true">$</span><span>DBUSDC Balance</span><strong className="balance-change">+2.000 DBUSDC</strong></li>
+            <li><span className="asset-icon asset-icon--points" aria-hidden="true">★</span><span>Point Balance</span><strong className="balance-change">+15.2 PTS</strong></li>
+          </ul>
+        </article>
+        <article className="checks-card risk-card">
+          <header className="checks-card__header"><span className="checks-step" aria-hidden="true">2</span><div><h3>SCORE RISK</h3><p>Puffer scores risk from 0 (safe) to 100 (risky).</p></div></header>
+          <div className="risk-meter" role="img" aria-label="Risk score: 87 out of 100, high risk">
+            <svg className="risk-meter__gauge" viewBox="0 0 300 178" aria-hidden="true">
+              <path className="risk-meter__track" d="M30 146A120 120 0 0 1 270 146" pathLength="100" />
+              <path className="risk-meter__safe" d="M30 146A120 120 0 0 1 270 146" pathLength="100" />
+              <g className="risk-meter__ticks">
+                {Array.from({ length: 13 }, (_, index) => <line key={index} x1="150" y1="27" x2="150" y2={index % 3 === 0 ? "42" : "37"} transform={`rotate(${-60 + index * 10} 150 147)`} />)}
+              </g>
+              <g className="risk-meter__needle" transform="rotate(49 150 147)"><path d="M150 147 159 65 150 51 141 65Z" /><circle cx="150" cy="147" r="10" /></g>
+            </svg>
+            <span className="risk-meter__limit risk-meter__limit--low">0</span><span className="risk-meter__limit risk-meter__limit--high">100</span>
+            <p className="risk-meter__score">87<small>HIGH RISK</small></p>
+          </div>
+        </article>
+        <article className="checks-card ledger-card">
+          <header className="checks-card__header"><span className="checks-step" aria-hidden="true">3</span><div><h3>APPROVE OR STOP</h3><p>Use your Ledger to continue safely.</p></div></header>
+          <div className="ledger-logo" aria-label="Ledger required"><Image src="/assets/puffer/ledger-logo-white-hd.png" alt="Ledger" width={140} height={44} /></div>
+          <div className="ledger-actions" aria-label="Transaction approval status"><div className="approve-action">APPROVE WITH LEDGER</div><div className="stop-action">STOP TRANSACTION</div></div>
+        </article>
+      </div>
     </div>
   </section>;
 }

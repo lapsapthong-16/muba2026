@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 
 interface Recipient { address: string; label: string }
 
@@ -44,84 +45,66 @@ export default function Guardrails() {
   const overWeekly = perTx > weekly
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-14 font-sans">
-      <h1 className="text-2xl font-semibold tracking-tight">Guardrails</h1>
-      <p className="mt-2 mb-8 text-sm text-zinc-600">
-        These bind your agent. Anything that trips them stops and waits for your Ledger — and the
-        weekly cap is a hard ceiling that a hardware approval cannot widen.
-      </p>
+    <main className="guardrails-page"><div className="guardrails-shell">
+      <header className="guardrails-hero"><div><p>PUFFER / CONTROL ROOM</p><h1>SET THE<br />BOUNDARIES</h1><span>Give your agent room to run — and a reef it cannot cross without you.</span></div><Image src="/assets/puffer/puffer-alert-large.png" alt="" width={300} height={220} priority /></header>
+      <div className="guardrails-status"><span><i /> POLICY CONFIGURATION</span><b>LEDGER REQUIRED</b></div>
 
-      {!ready && <p className="mb-6 rounded-md bg-amber-50 p-3 text-sm text-amber-900">Connect your Ledger on the setup page first.</p>}
+      {!ready && <p className="guardrails-alert">Connect your Ledger on the setup page first.</p>}
 
-      <fieldset className="mb-8" disabled={!ready}>
-        <label className="block text-sm font-medium">Single payment limit</label>
-        <p className="mb-2 text-xs text-zinc-500">Anything larger needs your approval on the device.</p>
-        <div className="flex items-center gap-2">
+      <fieldset className="guardrails-form" disabled={!ready}>
+        <section className="guardrails-panel"><h2><b>01</b><span>SPENDING LIMITS<small>Set the hard edge of autonomous spending.</small></span></h2><div className="guardrails-limits"><div><label>Single payment limit</label><p>Anything larger waits for your approval on the device.</p><div>
           <input type="number" min={0} step={0.1} value={perTx} onChange={(e) => setPerTx(+e.target.value)}
-            className="w-32 rounded border border-zinc-300 px-2 py-1 font-mono text-sm" />
-          <span className="text-sm text-zinc-600">SUI</span>
+            className="guardrails-number" /><span>SUI</span>
         </div>
-        <p className="mt-1 font-mono text-xs text-zinc-400">{BigInt(Math.round(perTx * 1e9)).toString()} MIST</p>
+        <em>{BigInt(Math.round(perTx * 1e9)).toString()} MIST</em></div>
 
-        <label className="mt-6 block text-sm font-medium">Weekly cap</label>
-        <p className="mb-2 text-xs text-zinc-500">
+        <div className="guardrails-limit--coral"><label>Weekly cap</label><p>
           A rolling 7-day ceiling. Reaching it stops the agent outright rather than escalating.
         </p>
-        <div className="flex items-center gap-2">
+        <div>
           <input type="number" min={0} step={1} value={weekly} onChange={(e) => setWeekly(+e.target.value)}
-            className="w-32 rounded border border-zinc-300 px-2 py-1 font-mono text-sm" />
-          <span className="text-sm text-zinc-600">SUI</span>
+            className="guardrails-number" /><span>SUI</span>
         </div>
-        <p className="mt-1 font-mono text-xs text-zinc-400">{BigInt(Math.round(weekly * 1e9)).toString()} MIST</p>
+        <em>{BigInt(Math.round(weekly * 1e9)).toString()} MIST</em></div></div>
         {overWeekly && (
-          <p className="mt-2 text-xs text-red-600">
+          <p className="guardrails-validation">
             A single payment cannot exceed the weekly cap — nothing would ever be approvable.
           </p>
-        )}
+        )}</section>
 
-        <label className="mt-6 block text-sm font-medium">Approved recipients</label>
-        <p className="mb-2 text-xs text-zinc-500">
+        <section className="guardrails-panel guardrails-recipients"><h2><b>02</b><span>APPROVED RECIPIENTS<small>Known routes can pass without a human check.</small></span></h2><p>
           Paying anyone not on this list needs your approval. Leave it empty and every new
           counterparty is escalated, which is the safe default.
         </p>
-        <ul className="mb-2 flex flex-col gap-1">
+        <ul>
           {recipients.map((r) => (
-            <li key={r.address} className="flex items-center justify-between gap-2 rounded border border-zinc-200 px-2 py-1">
-              <span className="truncate font-mono text-xs">{r.label} · {r.address.slice(0, 10)}…{r.address.slice(-6)}</span>
+            <li key={r.address}>
+              <span>{r.label} <small>· {r.address.slice(0, 10)}…{r.address.slice(-6)}</small></span>
               <button onClick={() => setRecipients(recipients.filter((x) => x.address !== r.address))}
-                className="text-xs text-red-600">remove</button>
+                className="guardrails-remove">REMOVE</button>
             </li>
           ))}
         </ul>
-        <div className="flex gap-2">
+        <div className="guardrails-recipient-inputs">
           <input placeholder="0x…" value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })}
-            className="flex-1 rounded border border-zinc-300 px-2 py-1 font-mono text-xs" />
+            className="guardrails-address-input" />
           <input placeholder="label" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-            className="w-28 rounded border border-zinc-300 px-2 py-1 text-xs" />
+            className="guardrails-label-input" />
           <button
             onClick={() => { if (draft.address && draft.label) { setRecipients([...recipients, draft]); setDraft({ address: '', label: '' }) } }}
-            className="rounded border border-zinc-300 px-3 py-1 text-xs hover:bg-zinc-100">Add</button>
+            className="guardrails-add">ADD</button>
         </div>
-      </fieldset>
+        </section></fieldset>
 
-      <p className="mb-4 rounded-md bg-zinc-50 p-3 text-sm">
-        Your agent may spend up to <strong>{perTx} SUI</strong> at a time, at most{' '}
-        <strong>{weekly} SUI</strong> a week, to{' '}
-        <strong>{recipients.length ? `${recipients.length} approved address${recipients.length > 1 ? 'es' : ''}` : 'nobody'}</strong>{' '}
-        without asking you.
-      </p>
+      <section className="guardrails-summary"><p>YOUR AUTONOMY WINDOW</p><div><strong>{perTx} <small>SUI</small></strong><span>per payment</span><i /> <strong>{weekly} <small>SUI</small></strong><span>per week</span><i /> <strong>{recipients.length}</strong><span>approved routes</span></div><p>Your agent can use this window without calling you back to the surface.</p></section>
 
-      <button onClick={save} disabled={!ready || overWeekly}
-        className="rounded-full bg-black px-5 py-2 text-sm font-medium text-white disabled:opacity-40">
-        Save guardrails
-      </button>
-      {saved && <span className="ml-3 text-sm text-green-700">{saved}</span>}
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      <div className="guardrails-save-row"><button onClick={save} disabled={!ready || overWeekly} className="guardrails-save">SAVE GUARDRAILS <span>→</span></button>{saved && <span className="guardrails-saved">✓ {saved}</span>}</div>
+      {error && <p className="guardrails-error">{error}</p>}
 
-      <p className="mt-8 text-xs text-zinc-500">
+      <p className="guardrails-footnote">
         The signing key for the spending address lives on this server. Your Ledger is a second human
         factor and the only key to the protected address — it is not key isolation for the float.
-      </p>
+      </p></div>
     </main>
   )
 }

@@ -66,7 +66,7 @@ export default function LedgerConnect({ onEnrolled }: { onEnrolled?: () => void 
   if (supported === null) return null
   if (!supported) {
     return (
-      <p className="text-sm text-amber-700">
+      <p className="setup-ledger-note setup-ledger-note--warning">
         This browser cannot talk to a Ledger. Open this page in desktop Chrome, Edge or Opera —
         Safari and Firefox do not implement WebHID.
       </p>
@@ -74,15 +74,15 @@ export default function LedgerConnect({ onEnrolled }: { onEnrolled?: () => void 
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="setup-ledger-connect">
       {state.s === 'done' ? (
-        <div className="text-sm">
-          <p className="font-medium text-green-700">Ledger connected.</p>
-          <dl className="mt-2 grid grid-cols-[8rem_1fr] gap-1 font-mono text-xs">
+        <div className="setup-ledger-done">
+          <p>✓ LEDGER CONNECTED</p>
+          <dl>
             <dt>Spending (1-of-2)</dt><dd className="break-all">{state.h}</dd>
             <dt>Protected (2-of-2)</dt><dd className="break-all">{state.m}</dd>
           </dl>
-          <p className="mt-2 text-zinc-600">
+          <p>
             Your agent spends from the first address on its own. Anything flagged has to move from
             the second, which needs your device.
           </p>
@@ -92,16 +92,16 @@ export default function LedgerConnect({ onEnrolled }: { onEnrolled?: () => void 
           <button
             onClick={connect}
             disabled={state.s === 'connecting'}
-            className="rounded-full bg-black px-5 py-2 text-sm font-medium text-white disabled:opacity-40"
+            className="setup-ledger-button"
           >
             {state.s === 'connecting' ? 'Waiting for your Ledger…' : 'Connect Ledger'}
           </button>
-          {state.s === 'connecting' && <p className="text-sm text-zinc-600">{state.note}</p>}
+          {state.s === 'connecting' && <p className="setup-ledger-note">{state.note}</p>}
           {state.s === 'confirm' && (
-            <p className="font-mono text-xs break-all">Device address: {state.address}</p>
+            <p className="setup-device-address">Device address: {state.address}</p>
           )}
-          {state.s === 'error' && <p className="text-sm text-red-600">{state.message}</p>}
-          <p className="text-xs text-zinc-500">
+          {state.s === 'error' && <p className="setup-ledger-note setup-ledger-note--error">{state.message}</p>}
+          <p className="setup-ledger-help">
             Unlock the device and open the Sui app first. Your Ledger holds a key this server has
             never seen — it is the second signature on anything the risk check flags.
           </p>

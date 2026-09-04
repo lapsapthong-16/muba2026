@@ -47,41 +47,6 @@ of everything protected, which is a larger expected loss than the attack being p
 
 ![Puffer routes routine and risky transactions through different signing gates](public/assets/readme-illustrations/02-solution-two-address-gate.png)
 
-### User flow
-
-```mermaid
-flowchart LR
-    A[Agent declares typed intent] --> B[Puffer builds transaction]
-    B --> C[Simulate on Sui]
-    C --> D{Rules and risk model}
-    D -->|Allowed| E[Sign with spending address]
-    D -->|Held| F[Rebuild from protected address]
-    F --> G[Human reviews on Ledger]
-    G -->|Approve| H[Ledger co-signs and broadcasts]
-    G -->|Decline| I[Payment refused]
-```
-
-### System architecture
-
-```mermaid
-flowchart TB
-    Agent[AI agent]
-    MCP[MCP endpoint\nseven wallet tools]
-    Gate[Typed intent + simulation\n deterministic rules + risk scoring]
-    Spend[Spending multisig\n1-of-2 · agent float]
-    Protect[Protected multisig\n2-of-2 · bulk funds]
-    Ledger[User Ledger]
-    Sui[Sui testnet]
-    DeepBook[DeepBook]
-    Agent --> MCP --> Gate
-    Gate -->|routine transaction| Spend
-    Gate -->|escalation| Protect
-    Ledger -->|second signature| Protect
-    Spend --> Sui
-    Protect --> Sui
-    Sui <--> DeepBook
-```
-
 ### Judging a transaction
 
 ```
@@ -110,8 +75,6 @@ apply two numbers, get the same answer the gate did.
 
 The model scores the **simulated** bundle, never the agent's words about it. On a real drain it
 returned 85/100 and named the manipulation unprompted:
-
-![A DeepBook free-airdrop drain held for Ledger review](public/assets/readme-illustrations/03-usecase-deepbook-drain.png)
 
 > The "claim free airdrop" text is a social engineering trick with no actual reward.
 

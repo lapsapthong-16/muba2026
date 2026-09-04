@@ -16,11 +16,16 @@ export const runtime = 'nodejs'
  */
 
 function baseUrl(req: Request): string {
+  const requestUrl = new URL(req.url)
+  // A local PUBLIC_BASE_URL is easy to leave behind when changing dev ports.
+  // For local onboarding, return the exact origin the agent called.
+  if (['localhost', '127.0.0.1', '[::1]'].includes(requestUrl.hostname)) {
+    return requestUrl.origin
+  }
+
   const envUrl = process.env.PUBLIC_BASE_URL
   if (envUrl) return envUrl.replace(/\/$/, '')
-  const proto = req.headers.get('x-forwarded-proto') ?? 'http'
-  const host = req.headers.get('host') ?? 'localhost:3000'
-  return `${proto}://${host}`
+  return requestUrl.origin
 }
 
 export async function POST(req: Request) {

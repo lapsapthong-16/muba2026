@@ -11,7 +11,7 @@ never supply bytes, choose slippage, or set your own limits.
 
 Everything below is one conversation, not a script. Follow whichever part the user is asking for.
 
----
+--
 
 ## "I want to create my wallet"
 

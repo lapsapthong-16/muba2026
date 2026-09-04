@@ -49,7 +49,6 @@ function WalletMockup() {
       <div className="workflow-terminal">
         <p><strong>&gt;_</strong> <span>wallet connected</span></p>
         <p>network: sui mainnet</p>
-        <b className="workflow-terminal-check">✓</b>
       </div>
     </div>
   );

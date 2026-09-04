@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Image from 'next/image'
 import LedgerConnect from './LedgerConnect'
 
 interface State {
@@ -46,24 +47,29 @@ export default function Setup() {
     return () => clearInterval(t)
   }, [refresh])
 
-  if (error) return <Shell><p className="text-red-600">{error}</p></Shell>
-  if (!state) return <Shell><p className="text-zinc-500">Loading…</p></Shell>
+  if (error) return <Shell><p className="setup-message setup-message--error">{error}</p></Shell>
+  if (!state) return <Shell><p className="setup-message">Preparing your safe water…</p></Shell>
 
   return (
     <Shell>
-      <div className="mb-6 flex items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Set up your agent wallet</h1>
-        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-amber-900">
-          {state.network}
-        </span>
+      <div className="setup-hero">
+        <div>
+          <h1>SET UP YOUR<br />AGENT WALLET</h1>
+          <p>Three short steps. One wallet your agent can use without swimming out of bounds.</p>
+        </div>
+        <Image className="setup-hero__puffer" src="/assets/puffer/puffer-calm-small.png" alt="" width={180} height={180} priority />
+      </div>
+      <div className="setup-statusbar">
+        <span><i /> SECURE SETUP</span>
+        <span className="setup-network">{state.network}</span>
       </div>
 
       <Step n={1} title="Connect your Ledger" done={!!state.ledger_address}>
         {state.ledger_address ? (
-          <p className="font-mono text-xs break-all text-zinc-600">{state.ledger_address}</p>
+          <p className="setup-device-address">{state.ledger_address}</p>
         ) : (
           <>
-            <p className="mb-3 text-sm text-zinc-600">
+            <p className="setup-copy">
               Your wallet does not exist until this is done. Both of its addresses are built from
               your device&apos;s key together with ours — we cannot create them alone, and that is
               the point.
@@ -86,21 +92,21 @@ export default function Setup() {
             </p>
           </div>
         ) : (
-          <p className="text-sm text-zinc-500">Connect your Ledger first.</p>
+          <p className="setup-muted">Connect your Ledger first.</p>
         )}
       </Step>
 
       <Step n={3} title="Set your guardrails" done={state.ready}>
         <a href="/guardrails"
-          className={`inline-block rounded-full px-5 py-2 text-sm font-medium ${
-            state.ledger_address ? 'bg-black text-white' : 'pointer-events-none bg-zinc-200 text-zinc-400'
+          className={`setup-guardrails-button ${
+            state.ledger_address ? '' : 'is-disabled'
           }`}>
           {state.ready ? 'Edit guardrails' : 'Set spending limits →'}
         </a>
       </Step>
 
       {state.ready && (
-        <p className="mt-8 rounded-md bg-green-50 p-4 text-sm text-green-900">
+        <p className="setup-live-message">
           Your wallet is live. Your agent can spend within your limits; anything that trips them
           stops here for you to approve on your Ledger.
         </p>
@@ -110,17 +116,17 @@ export default function Setup() {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <main className="mx-auto max-w-2xl px-6 py-14 font-sans">{children}</main>
+  return <main className="setup-page"><div className="setup-shell">{children}</div></main>
 }
 
 function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children: React.ReactNode }) {
   return (
-    <section className="mb-8 border-l-2 border-zinc-200 pl-5">
-      <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-        <span className={`grid h-5 w-5 place-items-center rounded-full text-[11px] ${done ? 'bg-green-600 text-white' : 'bg-zinc-200 text-zinc-600'}`}>
+    <section className={`setup-step ${done ? 'is-done' : ''}`}>
+      <h2>
+        <span className="setup-step__number">
           {done ? '✓' : n}
         </span>
-        {title}
+        <span><small>STEP {n}</small>{title}</span>
       </h2>
       {children}
     </section>
@@ -131,16 +137,16 @@ function Address({ label, hint, address, balance, primary }: {
   label: string; hint: string; address: string; balance: string; primary?: boolean
 }) {
   return (
-    <div className={`rounded-lg border p-3 ${primary ? 'border-black/20 bg-white' : 'border-zinc-200 bg-zinc-50'}`}>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{label}</span>
-        <span className="font-mono text-sm tabular-nums">{balance} SUI</span>
+    <div className={`setup-address ${primary ? 'setup-address--spending' : 'setup-address--protected'}`}>
+      <div className="setup-address__topline">
+        <span>{label}</span>
+        <strong>{balance} SUI</strong>
       </div>
-      <p className="mt-1 break-all font-mono text-xs text-zinc-700">{address}</p>
-      <div className="mt-2 flex items-center gap-3">
+      <p className="setup-address__value">{address}</p>
+      <div className="setup-address__footer">
         <button onClick={() => navigator.clipboard.writeText(address)}
-          className="rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100">Copy</button>
-        <span className="text-xs text-zinc-500">{hint}</span>
+          className="setup-copy-button">COPY</button>
+        <span>{hint}</span>
       </div>
     </div>
   )
