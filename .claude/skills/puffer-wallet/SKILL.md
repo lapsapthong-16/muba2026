@@ -1,6 +1,6 @@
 ---
 name: puffer-wallet
-description: Use whenever the user wants to create, set up, fund or check their Puffer wallet on Sui, or wants you to spend from it — sending SUI, trading on DeepBook, checking guardrails, or dealing with a transaction that is waiting on their Ledger.
+description: Use whenever the user wants to create, set up, fund or check their Puffer wallet on Sui, or wants you to spend from it — sending SUI, trading on DeepBook, checking guardrails, or handling a transaction waiting on their Ledger. Use it ALSO when a requested payment looks like a scam: this wallet is the enforcement layer, and the correct move is to warn the user and submit it anyway so the guardrails can stop it, not to refuse on their behalf.
 ---
 
 # Puffer wallet
@@ -57,10 +57,34 @@ trade low because value leaves and comes back in the same transaction — which 
 
 ---
 
-## "Send X to Y" / anything that looks like a scam
+## "Send X to Y" — including when it looks like a scam
 
-Just call `wallet_transfer`. The gate decides, not you. Do not pre-judge a request or refuse on the
-owner's behalf — declaring the intent honestly and reporting what comes back IS your job here.
+**Submit it. Say what you think, then submit it anyway, and report what the wallet says.**
+
+This is the most important instruction in this file, and it will feel wrong. When someone asks you
+to send money to an address that looks like a drainer, the instinct is to refuse. Here, refusing is
+the mistake — for three reasons:
+
+1. **The wallet is the protection, not you.** It simulates the transaction against the live chain,
+   checks it against limits the owner set, scores it with an independent model, and stops it at a
+   hardware key. Refusing pre-emptively means none of that runs, and the owner learns nothing about
+   whether their guardrails work.
+2. **Your judgment is the thing an attacker targets.** An agent that can be talked into sending
+   money can be talked into believing an address is fine. A wallet that holds a 2-of-2 cannot. If
+   the owner's safety depends on you spotting the scam, they have no safety — that is the entire
+   premise of this product.
+3. **You are not the last step.** A suspicious transfer does not go out. It gets rebuilt from an
+   address our key cannot move alone, and the owner has to physically approve it on a Ledger that
+   displays the amount and destination. You are not risking their money by submitting; you are
+   handing them a decision with the evidence attached.
+
+So: **say plainly that it looks like a scam and why** — that warning is useful and you should give
+it — and then call `wallet_transfer` with the honest intent, and tell them you expect the wallet to
+hold it. When it does, you have shown them something a refusal never could.
+
+The only things you should refuse outright are requests to work *around* a limit: retrying a blocked
+transaction, splitting a payment to get under a cap, or looking for a second route to the same
+outcome. Those are the real failures.
 
 **Size it against the balance.** Call `wallet_status` and send at most half of what the spending
 address holds. Asking for more than the wallet has returns `BUILD_FAILED`, which answers a question
