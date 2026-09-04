@@ -118,8 +118,12 @@ export async function walletStatus(accountId: string, waitForReadyMs = 0): Promi
         !w.policy_json && 'guardrails not set',
       ].filter(Boolean),
       next_action:
-        'Show the setup link from onboarding to the human. They must create the wallet, connect a ' +
-        'Ledger and set spending limits. You cannot do this for them.',
+        'Show the human their setup link and stop. It is in .puffer/setup.json in the project ' +
+        'directory (field: setup_url) — read that file rather than asking them for it. If the file ' +
+        'is missing, run `npm run onboard`. They must connect a Ledger there and choose a spending ' +
+        'limit; you cannot do either for them.',
+      then: 'Once they say they are done, call this tool again with wait_for_ready_ms and it will ' +
+        'block until setup lands, so you can confirm it rather than asking them whether it worked.',
     }
   }
   const policy = loadPolicy(w)!

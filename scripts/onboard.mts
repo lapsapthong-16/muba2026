@@ -35,7 +35,7 @@ const b = (await res.json()) as { bearer: string; setup_url: string; config_yaml
 const ignore = '.gitignore'
 const ignoreTxt = existsSync(ignore) ? readFileSync(ignore, 'utf8') : ''
 if (!ignoreTxt.includes('.mcp.json')) {
-  writeFileSync(ignore, ignoreTxt.replace(/\n*$/, '\n') + '\n# holds a wallet bearer\n.mcp.json\n')
+  writeFileSync(ignore, ignoreTxt.replace(/\n*$/, '\n') + '\n# hold wallet credentials\n.mcp.json\n.puffer/\n')
 }
 // Merge rather than overwrite: this is a shared file and clobbering someone else's server would be
 // a rude way to install a wallet.
@@ -50,6 +50,18 @@ existing.mcpServers = {
   },
 }
 writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n')
+
+// Leave the setup link where the agent can find it later. It ALREADY saw this URL — onboarding
+// printed it — so writing it down grants no capability it did not have a second ago. What it buys
+// is that "create my wallet", said an hour later, does not require the human to have kept a
+// terminal scrollback. Gitignored alongside .mcp.json, for the same reason.
+mkdirSync('.puffer', { recursive: true })
+writeFileSync('.puffer/setup.json', JSON.stringify({
+  account_id: b.account_id,
+  setup_url: b.setup_url,
+  base,
+  created_at: new Date().toISOString(),
+}, null, 2) + '\n')
 
 let skillNote = '   .claude/skills/puffer-wallet/ — active in this project already.'
 if (process.argv.includes('--global')) {

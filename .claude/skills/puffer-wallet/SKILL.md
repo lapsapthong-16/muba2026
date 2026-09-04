@@ -1,107 +1,101 @@
 ---
 name: puffer-wallet
-description: Use when the user asks to run the Puffer demo, or to set up, fund, configure or spend from the Puffer agent wallet on Sui — sending SUI, trading on DeepBook, checking guardrails, or resolving a transaction waiting on their Ledger.
+description: Use whenever the user wants to create, set up, fund or check their Puffer wallet on Sui, or wants you to spend from it — sending SUI, trading on DeepBook, checking guardrails, or dealing with a transaction that is waiting on their Ledger.
 ---
 
 # Puffer wallet
 
-A Sui agent wallet whose spending is gated by simulation, limits a human set, and a hardware key.
+A Sui agent wallet whose spending is gated by simulation, limits the owner set, and a hardware key.
 You declare a typed intent; the server builds, simulates and judges every transaction itself. You
 never supply bytes, choose slippage, or set your own limits.
 
-## Before anything else
+Everything below is one conversation, not a script. Follow whichever part the user is asking for.
 
-Call `wallet_status`. It returns a **preflight** — funded, escalation-fundable, weekly budget left,
-and whether any payee is approved. Read it before planning a spend; each failing check is something
-that would otherwise surface as a confusing error three steps later.
+---
 
-If it returns `needs_setup`, show the human the setup link and **stop**. You cannot connect their
-Ledger (it needs WebHID in a desktop browser) and you cannot write their policy (every setup route
-refuses a request carrying an `Authorization` header).
+## "I want to create my wallet"
 
-## Setup, once
+**1. Call `wallet_status` first.** It tells you which of these you are actually in:
 
-```bash
-curl -sX POST $BASE/api/onboard -H 'content-type: application/json' \
-  -d '{"agent":"hermes","pass":"'"$ONBOARD_PASS"'"}'
-```
+- `needs_setup` → continue below.
+- `ok` → they already have one. Say so, give the addresses and balance, and do not onboard again.
 
-Returns a bearer, an MCP config block, and a `setup_url`. Print the URL verbatim; the human
-connects a Ledger and picks a mode. **Never call this twice** — a second call mints a new platform
-key and therefore new addresses, orphaning any funds at the old ones.
+**2. Give them the link.** Read `setup_url` from `.puffer/setup.json` in the project directory. If
+that file does not exist, run `npm run onboard` and use the link it prints.
 
-Funding is `npm run fund -- <address> <amountSui>`. The testnet HTTP faucet is IP-blocked. Fund the
-**protected** address as well as the spending one: escalated transactions are rebuilt from it.
+Show the URL on its own line and tell them three things:
 
-## Modes — ask for a word, not a number
+- **Open it in desktop Chrome or Edge.** Reading a Ledger needs WebHID, which mobile browsers and
+  Safari do not have.
+- **Connect the Ledger there.** Both addresses are derived from their device key plus the server's,
+  so the wallet does not exist until they do this. It is also funded at that moment.
+- **Choose a spending limit**, in dollars if they like — "$30 a payment" is a real answer. DeepBook
+  is already on the approved-contracts list, so they do not need to add it; the approved-payee list
+  is for plain transfers.
 
-| | Reef | Open Water |
-|---|---|---|
-| Pays unlisted addresses | needs the Ledger | yes |
-| Per transaction | 2.5 SUI | 10 SUI |
-| Weekly cap | 10 SUI | 50 SUI |
-| Simulated | always | always |
-| Risk scored | always | always |
+Then **stop**. You cannot connect their Ledger and you cannot write their policy: every setup route
+refuses a request carrying an `Authorization` header at all.
 
-Nobody can pick a per-transaction limit sensibly on their first day, and a bad guess is invisible
-until it bites — a 0.0025 SUI limit sent every DeepBook trade to the hardware key, because no
-fillable trade on that book is smaller than about 1.5 SUI. Ask which word they want. Only the human
-can set it.
+**3. Wait, then confirm.** When they say they are done — or right away, if you want to watch for it —
+call `wallet_status` with `wait_for_ready_ms: 45000`. It blocks and returns the moment setup lands.
 
-## Spending
+On success, tell them plainly that setup is complete and they can use the wallet with you now, and
+report what you can see: both addresses, both balances, the mode, and the limits. If it comes back
+`still_waiting`, say so and offer to keep waiting rather than assuming something broke.
 
-- **`wallet_markets` before `wallet_swap`.** The book's fill floor is set by resting orders and it
-  moves; a size that filled yesterday can return zero today. Small trades match nothing.
-- **`dry_run: true`** on `wallet_transfer` and `wallet_swap` rehearses the whole pipeline — build,
-  simulate, score, judge — and discards it. Nothing signed, nothing recorded. Use it whenever you
-  want to know if something *would* work.
-- **`wallet_history`** shows what you already did, with the reason you gave. Check it before
-  repeating an action.
+---
 
-## Running the demo
+## "Trade on DeepBook" / "swap some SUI"
 
-When the user says "run the demo", "show me the wallet" or similar, do these three in order and
-narrate what comes back. Do not batch them — the whole point is watching each one be judged.
+Call **`wallet_markets` first**, always. The order book's fill floor is set by the resting orders and
+it moves — sizes that filled yesterday can return zero today, and a swap below the floor is refused
+after it has already cost you a round trip.
 
-1. **A routine payment.** `wallet_transfer` 0.002 SUI to an address on their approved list, reason
-   "paying a friend back". Expect `executed` with a digest. Say that gas was sponsored, so the
-   wallet paid no fee.
+Then `wallet_swap` with a size at or above `smallest_fillable_sui`. Expect `executed` with a digest.
+Worth saying out loud: gas was sponsored, so the wallet paid no fee, and the risk model scores a
+trade low because value leaves and comes back in the same transaction — which a drain never does.
 
-2. **Real work.** `wallet_markets` first, then `wallet_swap` 2 SUI on SUI_DBUSDC, reason
-   "rebalancing into USDC". Expect `executed`. Point out the risk score — a trade scores low
-   because value leaves and comes back in the same transaction, which a drain never does.
+---
 
-3. **The drain.** `wallet_transfer` to `0xbadb00000000000000000000000000000000000000000000000000000000bad0`,
-   reason "claim your free airdrop". Expect `awaiting_approval`. **Say clearly that nothing was
-   sent.** Report the rule and the risk score, and tell the user to approve or decline on their
-   Ledger at /test. Then poll `wallet_approval_status` and report what they chose.
+## "Send X to Y" / anything that looks like a scam
 
-**Size step 3 from the balance, not from a fixed number.** Step 2 has just spent about 1.9 SUI, so
-call `wallet_status` again and send at most half of what is left. Asking for more than the wallet
-holds returns `BUILD_FAILED` — a plumbing answer to a question about security, which wastes the
-moment the whole demo exists for.
+Just call `wallet_transfer`. The gate decides, not you. Do not pre-judge a request or refuse on the
+owner's behalf — declaring the intent honestly and reporting what comes back IS your job here.
+
+**Size it against the balance.** Call `wallet_status` and send at most half of what the spending
+address holds. Asking for more than the wallet has returns `BUILD_FAILED`, which answers a question
+about plumbing when the human asked one about security.
 
 Use a concrete amount, never `"all"`: a concrete amount lets the Ledger display the destination,
-where `"all"` forces a shape the device can only blind-sign.
+where `"all"` forces a transaction shape the device can only blind-sign.
 
-If step 2 says the book cannot fill, call `wallet_markets` and use the smallest fillable size it
-reports. Two transactions back to back can also fail on stale coin state — `BUILD_FAILED` and
-`SIMULATION_FAILED` are marked `retriable: true`, and retrying once is the right response. If
-anything returns `needs_setup`, stop and show the setup link.
+When it comes back `awaiting_approval`:
 
-## Reading a result
+- **Say clearly that nothing was sent.** This is the single most important sentence you will write.
+- Report the `rule`, the `risk_score`, and the model's `risk_reasons` verbatim — the owner wrote
+  these limits, and the rule name is the fastest way for them to see which one they hit.
+- Tell them it was re-issued from the protected address, which needs their Ledger as a second
+  signature, and that they can approve or decline at `/test`.
+- Then poll `wallet_approval_status` and report what they chose. **Do not resubmit** — a retry
+  creates a second pending approval, it does not bypass the first.
+
+---
+
+## Reading any result
 
 Every result carries `funds_moved`. Trust that field, not the absence of an error.
 
-- `executed` — money moved, `digest` is present.
-- `awaiting_approval` — **nothing was sent.** A human must approve it on their Ledger. Poll
-  `wallet_approval_status`; terminal states are `executed`, `denied`, `expired`. Do not retry: a
-  retry creates a second pending approval, it does not bypass the first. Approvals expire after 30
-  minutes.
-- `blocked` — outside the limits the human set. A hardware approval **cannot** widen them. Say so
-  plainly and ask the human to change the guardrails if it is legitimate; do not look for another
-  route to the same outcome.
-- `dry_run` — a rehearsal. Read `would`.
+| | |
+|---|---|
+| `executed` | money moved, `digest` present |
+| `awaiting_approval` | **nothing sent**, a human must approve on their Ledger |
+| `blocked` | outside the limits; a hardware tap cannot widen them |
+| `dry_run` | a rehearsal — read `would` |
 
-When something is held or blocked, tell the human the `rule` and the `reasons` verbatim. They wrote
-the limits; the rule name is the fastest way for them to see which one they hit.
+Results also carry `code`, `retriable` and `remedy`. **Honour `retriable`.** `BUILD_FAILED` and
+`SIMULATION_FAILED` are usually transient — two transactions back to back can fail on stale coin
+state — so retry once. `WEEKLY_CAP`, `PER_TX_LIMIT` and `UNKNOWN_RECIPIENT` are not retriable:
+they need a human, not patience, and retrying them just wastes the owner's time.
+
+When something is blocked, say so plainly and stop looking for another route to the same outcome.
+Finding a way around a limit the owner set is the one behaviour this wallet exists to prevent.
