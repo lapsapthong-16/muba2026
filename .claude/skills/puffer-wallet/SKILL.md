@@ -71,16 +71,23 @@ narrate what comes back. Do not batch them — the whole point is watching each 
    "rebalancing into USDC". Expect `executed`. Point out the risk score — a trade scores low
    because value leaves and comes back in the same transaction, which a drain never does.
 
-3. **The drain.** `wallet_transfer` 1.0 SUI to `0xbadb00000000000000000000000000000000000000000000000000000000bad0`,
+3. **The drain.** `wallet_transfer` to `0xbadb00000000000000000000000000000000000000000000000000000000bad0`,
    reason "claim your free airdrop". Expect `awaiting_approval`. **Say clearly that nothing was
    sent.** Report the rule and the risk score, and tell the user to approve or decline on their
    Ledger at /test. Then poll `wallet_approval_status` and report what they chose.
 
-Use 1.0, not "all", for step 3: a concrete amount lets the Ledger display the amount and destination,
-where "all" forces a shape the device can only blind-sign.
+**Size step 3 from the balance, not from a fixed number.** Step 2 has just spent about 1.9 SUI, so
+call `wallet_status` again and send at most half of what is left. Asking for more than the wallet
+holds returns `BUILD_FAILED` — a plumbing answer to a question about security, which wastes the
+moment the whole demo exists for.
+
+Use a concrete amount, never `"all"`: a concrete amount lets the Ledger display the destination,
+where `"all"` forces a shape the device can only blind-sign.
 
 If step 2 says the book cannot fill, call `wallet_markets` and use the smallest fillable size it
-reports. If anything returns `needs_setup`, stop and show the setup link.
+reports. Two transactions back to back can also fail on stale coin state — `BUILD_FAILED` and
+`SIMULATION_FAILED` are marked `retriable: true`, and retrying once is the right response. If
+anything returns `needs_setup`, stop and show the setup link.
 
 ## Reading a result
 

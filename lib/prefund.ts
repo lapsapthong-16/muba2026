@@ -24,10 +24,17 @@ import { getSuiClient, getBalance, NETWORK } from './sui'
  * demo convenience and nothing about it should quietly become a mainnet code path.
  */
 
-/** Total handed to a new wallet, split between the two addresses. */
-const PREFUND_TOTAL_MIST = 3_000_000_000n // 3 SUI, split explicitly below
-const SPENDING_MIST = 2_000_000_000n
-const PROTECTED_MIST = 1_000_000_000n
+/**
+ * Total handed to a new wallet, split between the two addresses.
+ *
+ * Sized to the whole demo rather than to one transaction: a payment, a 2 SUI trade, and an
+ * escalation big enough to be worth approving. At 2 SUI the spending address ran dry after the
+ * trade and the next request failed at BUILD before the gate ever saw it — which answers a
+ * question about plumbing when the human asked one about security.
+ */
+const SPENDING_MIST = 3_500_000_000n
+const PROTECTED_MIST = 1_500_000_000n
+const PREFUND_TOTAL_MIST = SPENDING_MIST + PROTECTED_MIST
 /** Leave the funder able to pay for its own next transaction. */
 const FUNDER_RESERVE = 5_000_000n
 

@@ -25,7 +25,7 @@ export const maxDuration = 60
  */
 
 function buildServer(accountId: string): McpServer {
-  const server = new McpServer({ name: 'hermes-wallet', version: '0.1.0' })
+  const server = new McpServer({ name: 'puffer', version: '1.0.0' })
 
   server.registerTool(
     'wallet_status',
