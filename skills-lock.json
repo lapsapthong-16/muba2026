@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "parallel-goals": {
+      "source": "lapsapthong-16/my-skills",
+      "sourceType": "github",
+      "skillPath": "skills/parallel-goals/SKILL.md",
+      "computedHash": "150cb32f614391d274936a5cea47040183ca88b2d2aad2c0718de80c29f6f083"
+    },
+    "refactor-codebase": {
+      "source": "lapsapthong-16/my-skills",
+      "sourceType": "github",
+      "skillPath": "skills/refactor-codebase/SKILL.md",
+      "computedHash": "bf4f0e3190207f6cf3082f8592d7fe615309cc2ebf64686eda8e343c1e8a0d0a"
+    },
+    "repo-illustrations": {
+      "source": "lapsapthong-16/my-skills",
+      "sourceType": "github",
+      "skillPath": "skills/repo-illustrations/SKILL.md",
+      "computedHash": "176c61ca812276ed5b0b2df46123c8ac53978b81a321b6cfc9469d063bb6e48e"
+    },
+    "repo-readme-writer": {
+      "source": "lapsapthong-16/my-skills",
+      "sourceType": "github",
+      "skillPath": "skills/repo-readme-writer/SKILL.md",
+      "computedHash": "5caef1ed66b06de503bf85f8612ab4e0cb5bc51fe2d1daa6d6da73d51572efbb"
+    }
+  }
+}
