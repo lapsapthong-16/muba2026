@@ -22,6 +22,21 @@ export const CoinCapSchema = z.object({
   decimals: z.number().int().min(0).max(18),
   perTxLimit: BaseUnits,
   weeklyLimit: BaseUnits,
+  /**
+   * If the human stated the cap in dollars, what they said and the rate it was pinned at.
+   *
+   * The LIMIT ITSELF STAYS IN BASE UNITS. Converting at evaluation time would put a live price
+   * feed in front of every payment — a slow oracle would stall the gate, and a moving one would
+   * mean the same transaction is allowed at 10:00 and refused at 10:01 with nothing changed. So
+   * the rate is pinned when the cap is set, and this records what it was so the number can be
+   * explained later rather than looking arbitrary.
+   */
+  usd: z.object({
+    perTxUsd: z.number().positive(),
+    weeklyUsd: z.number().positive(),
+    suiUsdAtSet: z.number().positive(),
+    pinnedAt: z.number().int().positive(),
+  }).optional(),
 }).refine((c) => BigInt(c.perTxLimit) <= BigInt(c.weeklyLimit), {
   message: 'Per-transaction limit cannot exceed the weekly cap',
   path: ['perTxLimit'],

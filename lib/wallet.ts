@@ -81,7 +81,30 @@ function loadPolicy(w: WalletRow): Policy | null {
 const toMist = (sui: number) => BigInt(Math.round(sui * 10 ** SUI_DECIMALS))
 const fmtSui = (mist: bigint) => (Number(mist) / 10 ** SUI_DECIMALS).toFixed(4).replace(/\.?0+$/, '')
 
-export async function walletStatus(accountId: string): Promise<Record<string, unknown>> {
+/**
+ * Wait for a human to finish setting the wallet up.
+ *
+ * Without this the agent's only move is to print a link and go quiet, leaving the person to work
+ * out for themselves when they can come back — or to poll, which is the agent asking the same
+ * question forty times. Blocking here lets it say "connect your Ledger, I'll tell you when I see
+ * it", which is what a person would say.
+ *
+ * Bounded well inside the MCP client's 60s deadline, and it returns the moment setup lands rather
+ * than at the end of the window.
+ */
+export async function walletStatus(accountId: string, waitForReadyMs = 0): Promise<Record<string, unknown>> {
+  if (waitForReadyMs > 0) {
+    const deadline = Date.now() + Math.min(waitForReadyMs, 45_000)
+    for (;;) {
+      const s = await walletStatus(accountId, 0)
+      if (s.wallet_ready || Date.now() >= deadline) {
+        return s.wallet_ready
+          ? { ...s, setup_just_completed: true, tell_the_human: 'Setup is complete — the wallet is live and I can use it now.' }
+          : { ...s, still_waiting: true, tell_the_human: 'Still waiting on the setup page. Call again with wait_for_ready_ms to keep waiting.' }
+      }
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+  }
   const w = await getWallet(accountId)
   const configured = !!w.h_address && !!w.policy_json && !!w.ledger_address
   if (!configured) {

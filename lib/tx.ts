@@ -266,3 +266,24 @@ export async function quoteSwap(poolKey: string, amount: number) {
     getQuoteQuantityOutInputFee(p: string, a: number): Promise<{ quoteOut: number; deepRequired: number }>
   }).getQuoteQuantityOutInputFee(poolKey, amount)
 }
+
+/**
+ * SUI priced in USD, from the order book we already trade on.
+ *
+ * A USD spending cap needs a price, and the honest place to get one is the same book the wallet
+ * actually fills against — DBUSDC is a dollar stand-in, so the SUI_DBUSDC mid price IS the price
+ * this wallet would really get. No oracle, no API key, no third party to be down.
+ *
+ * Returns null rather than guessing. A cap denominated against a made-up price is worse than a cap
+ * the human had to state in SUI.
+ */
+export async function suiUsdPrice(): Promise<number | null> {
+  try {
+    const { DeepBookClient } = await import('@mysten/deepbook-v3')
+    const db = new DeepBookClient({ address: '0x0', network: 'testnet', client: getSuiClient() as never })
+    const mid = await (db as unknown as { midPrice(pool: string): Promise<number> }).midPrice('SUI_DBUSDC')
+    return typeof mid === 'number' && mid > 0 ? mid : null
+  } catch {
+    return null
+  }
+}

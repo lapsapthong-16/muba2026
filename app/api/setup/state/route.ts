@@ -1,6 +1,7 @@
 import { getDb } from '@/lib/db'
 import { requireHuman, authErrorResponse } from '@/lib/auth'
 import { getBalance, SUI_DECIMALS, NETWORK } from '@/lib/sui'
+import { walletStatus } from '@/lib/wallet'
 
 export const runtime = 'nodejs'
 
@@ -41,8 +42,29 @@ export async function GET(req: Request) {
     .prepare("SELECT COUNT(*) AS n FROM decisions WHERE account_id=? AND state='pending' AND expires_at <= ?")
     .get(accountId, Date.now()) as { n: number }
 
+  // The dashboard shows the SAME preflight the agent gets, deliberately: two places describing
+  // readiness differently is how a human ends up debugging a problem the agent already reported.
+  let preflight: unknown = []
+  try {
+    const st = (await walletStatus(accountId)) as { preflight?: unknown }
+    preflight = st.preflight ?? []
+  } catch { /* a wallet mid-setup has no preflight yet */ }
+
+  const recent = getDb()
+    .prepare(
+      `SELECT id, state, intent, verdict_json, digest, created_at
+         FROM decisions WHERE account_id=? ORDER BY created_at DESC LIMIT 12`
+    )
+    .all(accountId) as { id: string; state: string; intent: string; verdict_json: string; digest: string | null; created_at: number }[]
+
   return Response.json({
     network: NETWORK,
+    preflight,
+    recent: recent.map((d) => {
+      let rule: string | null = null
+      try { rule = (JSON.parse(d.verdict_json) as { rule?: string }).rule ?? null } catch { /* unreadable verdict still lists */ }
+      return { id: d.id, state: d.state, intent: d.intent, rule, digest: d.digest, created_at: d.created_at }
+    }),
     pending_ids: pending.map((p) => p.id),
     expired_count: expired.n,
     spending_address: w.h_address || null,

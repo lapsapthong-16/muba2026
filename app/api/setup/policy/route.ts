@@ -3,6 +3,7 @@ import { requireHuman, authErrorResponse } from '@/lib/auth'
 import { PolicySchema } from '@/lib/policy/policy'
 import { SUI_TYPE, DEEPBOOK_PACKAGE } from '@/lib/sui'
 import { MODES, isModeName, policyFromMode, DEFAULT_MODE } from '@/lib/policy/modes'
+import { suiUsdPrice } from '@/lib/tx'
 
 export const runtime = 'nodejs'
 
@@ -25,6 +26,8 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as {
     mode?: string
     notifyUrl?: string | null
+    perTxUsd?: number
+    weeklyUsd?: number
     perTxSui?: number
     weeklySui?: number
     allowedRecipients?: { address: string; label: string }[]
@@ -57,6 +60,31 @@ export async function POST(req: Request) {
   const mode = isModeName(body.mode) ? body.mode : DEFAULT_MODE
   const preset = policyFromMode(mode, { allowedRecipients: body.allowedRecipients })
 
+  // Dollars are how people actually think about a spending limit; SUI is how the chain thinks.
+  // Convert once, here, and record the rate — so the stored limit stays a fixed number the gate can
+  // apply in microseconds, and the figure can still be explained six weeks later.
+  let usd: { perTxUsd: number; weeklyUsd: number; suiUsdAtSet: number; pinnedAt: number } | undefined
+  let perTxFromUsd: string | undefined
+  let weeklyFromUsd: string | undefined
+  if (body.perTxUsd !== undefined || body.weeklyUsd !== undefined) {
+    const price = await suiUsdPrice()
+    if (!price) {
+      return Response.json(
+        { error: 'Could not read a SUI price just now, so a dollar limit cannot be pinned. Set the limit in SUI, or try again shortly.' },
+        { status: 503 }
+      )
+    }
+    const perTxUsd = body.perTxUsd ?? body.weeklyUsd!
+    const weeklyUsd = body.weeklyUsd ?? perTxUsd * 4
+    if (perTxUsd <= 0 || weeklyUsd <= 0) {
+      return Response.json({ error: 'Dollar limits must be positive.' }, { status: 400 })
+    }
+    const toMistUsd = (d: number) => BigInt(Math.round((d / price) * 1e9)).toString()
+    perTxFromUsd = toMistUsd(perTxUsd)
+    weeklyFromUsd = toMistUsd(weeklyUsd)
+    usd = { perTxUsd, weeklyUsd, suiUsdAtSet: price, pinnedAt: Date.now() }
+  }
+
   let policy
   try {
     policy = PolicySchema.parse({
@@ -68,8 +96,9 @@ export async function POST(req: Request) {
           coinType: SUI_TYPE,
           symbol: 'SUI',
           decimals: 9,
-          perTxLimit: body.perTxSui !== undefined ? toMist(body.perTxSui) : preset.caps[0].perTxLimit,
-          weeklyLimit: body.weeklySui !== undefined ? toMist(body.weeklySui) : preset.caps[0].weeklyLimit,
+          perTxLimit: body.perTxSui !== undefined ? toMist(body.perTxSui) : perTxFromUsd ?? preset.caps[0].perTxLimit,
+          weeklyLimit: body.weeklySui !== undefined ? toMist(body.weeklySui) : weeklyFromUsd ?? preset.caps[0].weeklyLimit,
+          usd,
         },
       ],
       allowedRecipients: body.allowedRecipients ?? [],
@@ -106,5 +135,5 @@ export async function POST(req: Request) {
   // Any decision scored under the old limits is void.
   db.prepare("UPDATE decisions SET state='expired' WHERE account_id=? AND state='pending'").run(accountId)
 
-  return Response.json({ ok: true, policy_version: policy.version, mode, mode_summary: MODES[mode].summary, policy })
+  return Response.json({ ok: true, policy_version: policy.version, mode, mode_summary: MODES[mode].summary, usd, policy })
 }

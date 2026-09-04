@@ -35,10 +35,15 @@ function buildServer(accountId: string): McpServer {
         'START HERE. Address, balance, configured guardrails and any pending approvals. ' +
         'If it returns needs_setup, show the setup_url to the human and STOP — you cannot set the ' +
         'wallet up for them. Read the guardrails before planning any spend: staying inside them is ' +
-        'the difference between a payment that settles and one that waits on a hardware key.',
-      inputSchema: {},
+        'the difference between a payment that settles and one that waits on a hardware key.\n' +
+        'After you hand the human a setup link, call this again with wait_for_ready_ms and it will ' +
+        'block until they finish — so you can tell them setup is done instead of asking them.',
+      inputSchema: {
+        wait_for_ready_ms: z.number().int().min(0).max(45_000).optional()
+          .describe('Block until the wallet is set up, up to this long. Returns as soon as it is ready.'),
+      },
     },
-    async () => text(await walletStatus(accountId))
+    async (args) => text(await walletStatus(accountId, (args as never as { wait_for_ready_ms?: number }).wait_for_ready_ms ?? 0))
   )
 
   server.registerTool(

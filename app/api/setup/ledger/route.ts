@@ -5,6 +5,7 @@ import { requireHuman, authErrorResponse } from '@/lib/auth'
 import { keypairFromSealed, sealSecretKey } from '@/lib/keys'
 import { makeCommittees } from '@/lib/multisig'
 import { LEDGER_PATH } from '@/lib/ledger'
+import { prefund } from '@/lib/prefund'
 
 export const runtime = 'nodejs'
 
@@ -76,9 +77,15 @@ export async function POST(req: Request) {
       WHERE account_id=?`
   ).run(H, M, body.deviceAddress.toLowerCase(), JSON.stringify(committees), accountId)
 
+  // Fund it now, in the same breath as creating it. Awaited rather than fire-and-forget: the very
+  // next thing the human does is set limits and ask an agent to spend, and a balance that lands
+  // "soon" is a balance that is not there when it is first needed.
+  const funding = await prefund(H, M)
+
   return Response.json({
     spending_address: H,
     protected_address: M,
+    funding,
     ledger_address: body.deviceAddress.toLowerCase(),
     recovery_phrase_once: recovery.getSecretKey(),
     recovery_note:
