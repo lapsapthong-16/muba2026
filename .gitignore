@@ -43,3 +43,6 @@ next-env.d.ts
 # wallet sqlite store
 /data
 !.env.example
+
+# holds a wallet bearer
+.mcp.json

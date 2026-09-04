@@ -1,12 +1,20 @@
 /**
- * Onboard an agent and print everything you need, in order.
+ * Onboard an agent, WIRE IT UP, and print what only a human can do.
  *
  *   npm run onboard              # against http://localhost:3000
  *   PORT=3001 npm run onboard
+ *   npm run onboard -- --global  # also install the skill for every project
  *
- * This is what hermes would do on first run. It prints the setup URL for you to open,
- * and the MCP config to paste into your agent.
+ * This is what hermes would do on first run. It writes .mcp.json so Claude Code picks the wallet
+ * up on its next start with no copy-paste, and prints the equivalent for Codex and hermes.
+ *
+ * .mcp.json HOLDS A BEARER, so it is written to .gitignore before it is written to disk. A demo
+ * credential is still a credential, and the difference between a testnet key and a mainnet one is
+ * one careless commit.
  */
+import { writeFileSync, readFileSync, existsSync, mkdirSync, cpSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 const port = process.env.PORT ?? '3000'
 const base = process.env.BASE_URL ?? `http://localhost:${port}`
 const pass = process.env.ONBOARD_PASS ?? 'demo'
@@ -22,6 +30,34 @@ if (!res.ok) {
   process.exit(1)
 }
 const b = (await res.json()) as { bearer: string; setup_url: string; config_yaml: string; account_id: string }
+
+/* ---------- wire Claude Code up, rather than asking you to ---------- */
+const ignore = '.gitignore'
+const ignoreTxt = existsSync(ignore) ? readFileSync(ignore, 'utf8') : ''
+if (!ignoreTxt.includes('.mcp.json')) {
+  writeFileSync(ignore, ignoreTxt.replace(/\n*$/, '\n') + '\n# holds a wallet bearer\n.mcp.json\n')
+}
+// Merge rather than overwrite: this is a shared file and clobbering someone else's server would be
+// a rude way to install a wallet.
+const mcpPath = '.mcp.json'
+const existing = existsSync(mcpPath) ? JSON.parse(readFileSync(mcpPath, 'utf8')) : {}
+existing.mcpServers = {
+  ...(existing.mcpServers ?? {}),
+  puffer: {
+    type: 'http',
+    url: `${base}/api/mcp`,
+    headers: { Authorization: `Bearer ${b.bearer}` },
+  },
+}
+writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n')
+
+let skillNote = '   .claude/skills/puffer-wallet/ — active in this project already.'
+if (process.argv.includes('--global')) {
+  const dest = join(homedir(), '.claude', 'skills', 'puffer-wallet')
+  mkdirSync(dest, { recursive: true })
+  cpSync('.claude/skills/puffer-wallet', dest, { recursive: true })
+  skillNote = `   Installed to ${dest} — available in every project.`
+}
 
 console.log(`
 ──────────────────────────────────────────────────────────────────────
@@ -51,18 +87,9 @@ ${b.setup_url}
 ──────────────────────────────────────────────────────────────────────
  4. CONNECT YOUR AGENT — pick the one you use
 ──────────────────────────────────────────────────────────────────────
- CLAUDE CODE  — .mcp.json in your project root (or ~/.claude.json):
-   {
-     "mcpServers": {
-       "hermes-wallet": {
-         "type": "http",
-         "url": "${base}/api/mcp",
-         "headers": { "Authorization": "Bearer ${b.bearer}" }
-       }
-     }
-   }
-   or:  claude mcp add --transport http hermes-wallet ${base}/api/mcp \\
-          --header "Authorization: Bearer ${b.bearer}"
+ CLAUDE CODE  — done. .mcp.json written in this directory.
+   Restart Claude Code here and approve the server when it asks.
+${skillNote}
 
  CODEX  — ~/.codex/config.toml:
    [mcp_servers.hermes_wallet]

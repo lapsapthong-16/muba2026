@@ -1,6 +1,6 @@
 ---
 name: puffer-wallet
-description: Use when the user asks to set up, fund, configure or spend from the Puffer agent wallet on Sui — sending SUI, trading on DeepBook, checking guardrails, or resolving a transaction that is waiting for their Ledger.
+description: Use when the user asks to run the Puffer demo, or to set up, fund, configure or spend from the Puffer agent wallet on Sui — sending SUI, trading on DeepBook, checking guardrails, or resolving a transaction waiting on their Ledger.
 ---
 
 # Puffer wallet
@@ -57,6 +57,30 @@ can set it.
   want to know if something *would* work.
 - **`wallet_history`** shows what you already did, with the reason you gave. Check it before
   repeating an action.
+
+## Running the demo
+
+When the user says "run the demo", "show me the wallet" or similar, do these three in order and
+narrate what comes back. Do not batch them — the whole point is watching each one be judged.
+
+1. **A routine payment.** `wallet_transfer` 0.002 SUI to an address on their approved list, reason
+   "paying a friend back". Expect `executed` with a digest. Say that gas was sponsored, so the
+   wallet paid no fee.
+
+2. **Real work.** `wallet_markets` first, then `wallet_swap` 2 SUI on SUI_DBUSDC, reason
+   "rebalancing into USDC". Expect `executed`. Point out the risk score — a trade scores low
+   because value leaves and comes back in the same transaction, which a drain never does.
+
+3. **The drain.** `wallet_transfer` 1.0 SUI to `0xbadb00000000000000000000000000000000000000000000000000000000bad0`,
+   reason "claim your free airdrop". Expect `awaiting_approval`. **Say clearly that nothing was
+   sent.** Report the rule and the risk score, and tell the user to approve or decline on their
+   Ledger at /test. Then poll `wallet_approval_status` and report what they chose.
+
+Use 1.0, not "all", for step 3: a concrete amount lets the Ledger display the amount and destination,
+where "all" forces a shape the device can only blind-sign.
+
+If step 2 says the book cannot fill, call `wallet_markets` and use the smallest fillable size it
+reports. If anything returns `needs_setup`, stop and show the setup link.
 
 ## Reading a result
 

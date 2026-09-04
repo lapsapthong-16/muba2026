@@ -16,7 +16,8 @@
     "onboard": "tsx --env-file=.env scripts/onboard.mts",
     "demo": "tsx --env-file=.env scripts/demo.mts",
     "check": "tsx --env-file=.env scripts/check.mts",
-    "flow": "bash scripts/flow.sh"
+    "flow": "bash scripts/flow.sh",
+    "connect": "tsx --env-file=.env scripts/connect.mts"
   },
   "dependencies": {
     "@ledgerhq/hw-transport-web-ble": "^6.35.0",
