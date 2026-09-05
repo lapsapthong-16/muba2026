@@ -1,0 +1,3 @@
+/* Guardrails uses the shared product header like the other app routes. */
+body:has(.guardrails-page) .site-header{display:flex}
+body:has(.guardrails-page) .guardrails-page{background:#031246}

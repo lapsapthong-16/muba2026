@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
+import './guardrails-overrides.css'
 
 interface Recipient { address: string; label: string }
 

@@ -8,6 +8,7 @@ import Sui from '@mysten/ledgerjs-hw-app-sui'
 import { LedgerSigner } from '@mysten/ledger-signer'
 import { SuiGrpcClient } from '@mysten/sui/grpc'
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 import { LEDGER_PATH, explainLedgerError } from '@/lib/ledger'
 
 const FULLNODE = 'https://fullnode.testnet.sui.io:443'
@@ -215,9 +216,9 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
       if (!r.ok) throw new Error(body.error ?? `Server returned ${r.status}`)
       say(`EXECUTED. digest ${body.digest}`)
       setLastOutcome(`Approved and executed. ${body.digest ? `Transaction: ${body.digest}` : ''}`)
+      setPending((rows) => rows.filter((row) => row.id !== p.id))
       for (const line of (body.guardrails_updated ?? []) as string[]) say(line)
       say(body.explorer)
-      await refresh()
     } catch (e) {
       say(`FAILED: ${explainLedgerError(e)}`)
       // The raw message too — this is a test bench, and a friendly string that misdiagnoses the
@@ -230,15 +231,25 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
   }
 
   async function decline(p: Pending) {
-    const r = await fetch(`/api/approve/${p.id}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'decline' }),
-    })
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Could not decline this approval.')
-    setLastOutcome('Declined. Nothing was sent.')
-    say('Declined. Nothing was sent.')
-    await refresh()
+    setBusy(true)
+    setLog([])
+    try {
+      const r = await fetch(`/api/approve/${p.id}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'decline' }),
+      })
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Could not decline this approval.')
+      setLastOutcome('Declined. Nothing was sent.')
+      setPending((rows) => rows.filter((row) => row.id !== p.id))
+      say('Declined. Nothing was sent.')
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      setLastOutcome('Decline failed. The approval is still waiting.')
+      say(`FAILED: ${message}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function requestRefund() {
@@ -252,6 +263,8 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
       await refresh()
     } finally { setRefundBusy(false) }
   }
+
+  if (reviewOnly) return <ApprovalReview busy={busy} device={device} pending={pending} link={link} lastOutcome={lastOutcome} onConnect={checkDevice} onLink={setLink} onRefresh={refresh} onApprove={signApproval} onDecline={decline} optIn={optIn} onTick={tick} />
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12 font-sans">
@@ -483,3 +496,24 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
 
 const hex = (b: Uint8Array) => '0x' + Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('')
 const b64ToBytes = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+
+function ApprovalReview({ busy, device, pending, link, lastOutcome, onConnect, onLink, onRefresh, onApprove, onDecline, optIn, onTick }: {
+  busy: boolean; device: { address: string; version: string } | null; pending: Pending[]; link: Link; lastOutcome: string | null
+  onConnect: () => void; onLink: (link: Link) => void; onRefresh: () => void; onApprove: (pending: Pending) => void; onDecline: (pending: Pending) => void
+  optIn: Record<string, { raise?: boolean; allow?: boolean }>; onTick: (id: string, key: 'raise' | 'allow') => void
+}) {
+  const p = pending[0]
+  const recipient = p?.description?.headline ?? p?.intent ?? 'Pending recipient'
+  const amount = (p?.description?.movements.find((m) => m.direction === 'out')?.amount ?? '—').replace(/^-/, '')
+  return <main className="review-page"><section className="review-shell">
+    <header className="review-hero"><div><p>PUFFER APPROVAL REVIEW</p><h1>{device ? (p ? 'ONE MOVE NEEDS YOU' : 'ALL CLEAR FOR NOW') : 'CONNECT BEFORE YOU REVIEW'}</h1></div><a className="review-puffer-link" href="/"><Image className="review-puffer" src="/assets/puffer/puffer-review-hands.png" alt="Puffer home" width={470} height={315} priority /></a></header>
+    <div className={`review-status ${device ? 'is-connected' : ''}`}><span><i /> {device ? `LEDGER CONNECTED · ${device.address.slice(0, 8)}…${device.address.slice(-5)}` : 'LEDGER NOT CONNECTED'}</span>{device && <button onClick={onRefresh}>REFRESH</button>}</div>
+    {lastOutcome && <p className="review-outcome review-outcome--global">{lastOutcome}</p>}
+    {!device ? <section className="review-state"><span className="review-state__number">01</span><h2>CONNECT YOUR LEDGER FIRST</h2><p>Your hardware device is the second signature. Nothing can be approved until Puffer can confirm it is here.</p><div className="review-link"><button onClick={() => onLink('usb')} className={link === 'usb' ? 'is-selected' : ''}>USB CABLE</button><button onClick={() => onLink('ble')} className={link === 'ble' ? 'is-selected' : ''}>BLUETOOTH</button></div><button className="review-primary" onClick={onConnect} disabled={busy}>{busy ? 'CONNECTING…' : 'CONNECT LEDGER →'}</button></section> : !p ? <section className="review-state review-empty"><span className="review-state__number">✓</span><h2>NO APPROVALS WAITING</h2><p>Your agent has no held transaction right now. Anything outside its guardrails will land here for your Ledger to review.</p><button className="review-primary" onClick={onRefresh}>CHECK AGAIN →</button></section> : <section className="review-card">
+      <div className="review-facts"><div><small>AMOUNT</small><strong>{amount}</strong></div><div><small>TO</small><b>{recipient}</b><code>{p.from.slice(0, 7)}…{p.from.slice(-5)}</code></div><div><small>REASON</small><em>{p.rule.replaceAll('_', ' ')}</em></div></div>
+      <div className="review-flow"><div><span>FROM (PROTECTED)</span><b>PUFFER GUARDIAN</b><code>{p.from.slice(0, 8)}…{p.from.slice(-5)}</code></div><i>→</i><div><span>TO (RECIPIENT)</span><b>{recipient}</b><code>{p.from.slice(0, 8)}…{p.from.slice(-5)}</code></div></div>
+      <div className="review-columns"><article><h2>▣ WHAT YOUR LEDGER WILL SHOW</h2><ul>{(p.description?.deviceWillShow ?? [`Transfer ${amount} from Puffer Guardian`, `To ${recipient}`, 'Network: Sui']).slice(0, 3).map((line, i) => <li key={i}>{line}</li>)}</ul></article><article className="review-why"><h2>! WHY THE AGENT PAUSED</h2><p>{p.description?.flags[0]?.detail ?? p.reasons[0] ?? 'This transaction requires your signature.'}</p><hr /><small>SIMULATION RESULT</small><p className="review-valid">✓ Transaction is valid and would succeed.</p></article></div>
+      {!!p.adjustments?.allow_recipient && <label className="review-remember"><input type="checkbox" checked={!!optIn[p.id]?.allow} onChange={() => onTick(p.id, 'allow')} /> Remember this recipient</label>}
+      <div className="review-actions"><button className="review-primary" onClick={() => onApprove(p)} disabled={busy}>{busy ? 'WAITING FOR LEDGER…' : 'APPROVE ON LEDGER →'}</button><button className="review-decline" onClick={() => onDecline(p)} disabled={busy}>DECLINE</button></div>
+    </section>}</section><p className="review-lock"><img src="/assets/puffer/lock-icon.png" alt="" /> Puffer cannot move this address alone.</p></main>
+}

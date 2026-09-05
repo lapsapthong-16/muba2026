@@ -1,0 +1,2 @@
+/* Keep setup's page field aligned with the shared product header. */
+body:has(.setup-page) .setup-page{background:#031246}

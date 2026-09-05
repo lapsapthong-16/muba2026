@@ -1,5 +1,7 @@
 # Puffer
 
+TODO: Add a dashboard field for configuring `notifyUrl`, so users can connect approval alerts to a Slack, Discord, ntfy, or custom webhook without calling the API manually.
+
 **An agent wallet on Sui that is a 1-of-2 most of the time, and a 2-of-2 when it needs to be.**
 
 A pufferfish is unremarkable until something threatens it. Your agent spends freely inside limits
@@ -57,26 +59,41 @@ The agent declares a **typed intent** — a recipient, an amount, a pool — and
 server builds every transaction itself. That is the load-bearing property: a prompt-injected agent
 cannot smuggle an arbitrary Move call past the gate, because it never had a way to write one.
 
-Then the chain is asked what the transaction actually does, and the answer is judged in a fixed
-order, first match winning:
+Then the chain is asked what the transaction actually does. The simulation is the source of truth
+for its effects — who gains and loses each asset, which packages it calls, whether an object or
+capability leaves the wallet, and whether it succeeds. Puffer judges those facts in a fixed order,
+first match winning:
 
 | | |
 |---|---|
 | Simulation failed or unreachable | **blocked** |
 | `WEEKLY_CAP` | **blocked** — hardware cannot create budget |
 | `PER_TX_LIMIT`, `UNKNOWN_RECIPIENT`, `UNKNOWN_PACKAGE`, `CAPABILITY_TRANSFER` | **needs your Ledger** |
-| Risk score not low, or the model abstained | **needs your Ledger** |
+| Gonka risk score medium or high | **needs your Ledger** |
+| Gonka is unavailable for a transaction already flagged by a deterministic rule | **needs your Ledger** |
 | otherwise | **allowed** |
 
-Deterministic rules are a floor. The risk model — MiniMax-M2.7 via Gonka — can only escalate above
-it, never below, and an abstention escalates too, so a model that is down cannot let anything
-through. Bands are ours and published: under 34 low, under 67 medium, else high. Read the score,
-apply two numbers, get the same answer the gate did.
+Deterministic rules are a floor. The risk model — one model, **MiniMax-M2.7 via Gonka** — can only
+escalate above them, never clear a rule that fired. There are not two competing risk scores: Sui
+simulation supplies verifiable facts about the proposed transaction, while Gonka supplies one
+model assessment of the risk in those facts. Bands are ours and published: under 34 low, under 67
+medium, else high. Read the model score, apply those two thresholds, and get the same band Puffer
+uses.
 
-The model scores the **simulated** bundle, never the agent's words about it. On a real drain it
-returned 85/100 and named the manipulation unprompted:
+The model receives the **simulated evidence bundle**, not raw transaction bytes and not a claim
+from the agent that a payment is safe. Its input contains balance changes, gas use, Move packages,
+object transfers, and simulation status. The agent's stated reason is explicitly marked as
+untrusted text. On a real drain MiniMax returned 85/100 and named the manipulation unprompted:
 
 > The "claim free airdrop" text is a social engineering trick with no actual reward.
+
+Gonka availability is not allowed to weaken an existing rule. If a transaction is already flagged
+by policy, a timeout, malformed answer, or substituted model still sends it to the Ledger. For a
+transaction that clears every deterministic rule, Puffer treats a Gonka non-response as advisory
+and can proceed on the deterministic clear; this avoids making every routine payment wait for a
+shared GPU pool. That is an availability trade-off, not a second source of permission. The gate
+never lets Gonka override a cap, unfamiliar-recipient rule, package rule, simulation failure, or
+capability-transfer block.
 
 `CAPABILITY_TRANSFER` is there because balance changes cannot see it: handing over an admin
 capability yields a `balanceChanges` array whose only row is gas, so every cap, limit and recipient

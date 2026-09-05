@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Image from 'next/image'
 import LedgerConnect from './LedgerConnect'
+import './setup-overrides.css'
 
 interface State {
   network: string
