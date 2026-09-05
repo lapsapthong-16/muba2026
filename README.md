@@ -85,6 +85,16 @@ A review can also offer a safe, server-derived adjustment—such as adding the c
 
 ## 🤖 Built for AI agents
 
+### Add the Puffer wallet skill
+
+Give a compatible coding agent the Puffer wallet instructions with one command:
+
+```bash
+npx skills add lapsapthong-16/muba2026@puffer-wallet
+```
+
+The skill tells an agent how to set up and use Puffer safely, including when to request a Ledger review. It does **not** provide a hosted wallet, private keys, or MCP credentials—you still run or deploy Puffer and connect the agent to your own MCP endpoint.
+
 Puffer's primary interface is **MCP Streamable HTTP**. An onboarding call returns a bearer, MCP configuration, and a one-time setup link. The agent prints the link and stops: connecting the Ledger and choosing guardrails happen in a human browser session, and the bearer is rejected by every setup and approval route.
 
 | MCP tool | Purpose |
