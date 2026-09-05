@@ -32,8 +32,8 @@ import { getSuiClient, getBalance, NETWORK } from './sui'
  * trade and the next request failed at BUILD before the gate ever saw it — which answers a
  * question about plumbing when the human asked one about security.
  */
-const SPENDING_MIST = 3_000_000_000n
-const PROTECTED_MIST = 1_000_000_000n
+const SPENDING_MIST = 5_000_000_000n
+const PROTECTED_MIST = 3_000_000_000n
 const PREFUND_TOTAL_MIST = SPENDING_MIST + PROTECTED_MIST
 /** Leave the funder able to pay for its own next transaction. */
 const FUNDER_RESERVE = 5_000_000n

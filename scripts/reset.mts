@@ -14,17 +14,18 @@
  *   2. WAL mode means the file is really three files — wallet.db, -wal and -shm. Removing only the
  *      first leaves a write-ahead log that can replay rows you thought were gone.
  *
- * It does NOT sweep the SUI out of old wallets. The spending address could be swept (our key
- * satisfies its 1-of-2 alone), but the protected address is a 2-of-2 whose recovery key we hand to
- * the human and do not keep — so half of it is unrecoverable by us by design, and a reset that
- * quietly recovered half would be more confusing than one that recovers none. It prints what is
- * left behind instead, so the number is visible rather than silently gone.
+ * Before clearing, it refunds spending-pocket SUI to REFUND. The protected address is a 2-of-2
+ * whose recovery key we hand to the human and do not keep, so protected SUI remains there and is
+ * printed rather than silently treated as recovered.
  */
 import { existsSync, rmSync } from 'node:fs'
 import { getDb } from '../lib/db'
 import { getBalance, NETWORK, assertChain } from '../lib/sui'
+import { buildTransferAll } from '../lib/tx'
+import { executeFromSpending } from '../lib/execute'
 
 const dry = process.argv.includes('--dry')
+const refund = process.env.REFUND
 
 // The one real rail. Everything below is irreversible, and "it only ever ran on testnet" is an
 // assumption worth checking rather than believing.
@@ -73,6 +74,19 @@ console.log(`\n  files         ${files.length ? files.join(', ') : '(none)'}`)
 if (dry) {
   console.log('\n--dry: nothing was changed.')
   process.exit(0)
+}
+
+if (!refund?.startsWith('0x')) {
+  console.error('\nREFUND is required for a real reset; set it to your testnet wallet address.')
+  process.exit(1)
+}
+
+for (const w of wallets) {
+  const amount = await getBalance(w.h_address)
+  if (!amount) continue
+  const frozen = await buildTransferAll(w.h_address, refund)
+  const res = await executeFromSpending(w.account_id, frozen)
+  console.log(`    refunded ${(Number(amount) / 1e9).toFixed(4)} SUI from spending pocket (${res.digest})`)
 }
 
 /**

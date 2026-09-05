@@ -71,6 +71,7 @@ export default function TestPage() {
   const [busy, setBusy] = useState(false)
   const [expiredCount, setExpiredCount] = useState(0)
   const [link, setLink] = useState<Link>('usb')
+  const [refundBusy, setRefundBusy] = useState(false)
 
   const say = (s: string) => setLog((l) => [...l, s])
 
@@ -236,6 +237,18 @@ export default function TestPage() {
     await refresh()
   }
 
+  async function requestRefund() {
+    setRefundBusy(true)
+    try {
+      const r = await fetch('/api/refund', { method: 'POST' })
+      const raw = await r.text()
+      let body: { approval_id?: string; error?: string } = {}
+      try { body = raw ? JSON.parse(raw) : {} } catch { body = { error: `Server returned ${r.status} without JSON.` } }
+      say(r.ok ? `Recovery approval created: ${body.approval_id}. Approve it below.` : `FAILED: ${body.error ?? 'Could not create recovery approval.'}`)
+      await refresh()
+    } finally { setRefundBusy(false) }
+  }
+
   return (
     <main className="mx-auto max-w-3xl px-6 py-12 font-sans">
       <h1 className="text-2xl font-semibold tracking-tight">Ledger test bench</h1>
@@ -257,6 +270,13 @@ export default function TestPage() {
       )}
 
       <section className="mt-8">
+        <div className="mb-8 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-900">Protected-funds recovery</h2>
+          <p className="mt-1 text-sm text-amber-800">Create a Ledger approval to return the protected pocket to the configured REFUND address.</p>
+          <button className="mt-3 rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50" style={{ background: '#713f12', color: '#fff' }} disabled={refundBusy} onClick={requestRefund}>
+            {refundBusy ? 'Preparing…' : 'Recover protected funds'}
+          </button>
+        </div>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">1 · Device check</h2>
         <div className="mb-3 flex gap-2 text-sm">
           {(['usb', 'ble'] as Link[]).map((l) => (

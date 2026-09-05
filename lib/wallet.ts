@@ -376,6 +376,21 @@ export async function submitTransfer(
   }
 }
 
+/** Human-initiated recovery of protected SUI back to the configured refund address. */
+export async function requestProtectedRefund(accountId: string, to: string): Promise<Record<string, unknown>> {
+  const w = await getWallet(accountId)
+  if (!w?.m_address) return { outcome: 'blocked', funds_moved: false, rule: 'NO_PROTECTED_ADDRESS' }
+  const amount = await getBalance(w.m_address)
+  if (!amount) return { outcome: 'blocked', funds_moved: false, rule: 'PROTECTED_EMPTY', note: 'The protected address has no SUI.' }
+  let frozen: FrozenTx
+  try { frozen = await buildTransferAll(w.m_address, to) }
+  catch (e) { return { outcome: 'blocked', funds_moved: false, rule: 'BUILD_FAILED', reasons: [e instanceof Error ? e.message : String(e)] } }
+  const sim = await simulate(frozen.bytes, w.m_address)
+  const d = { verdict: 'needs_ledger', rule: 'PROTECTED_RECOVERY', reasons: ['Recovery of protected funds requires your Ledger.'], ballotRisk: 'low', ballotScore: 0, ballotReasons: [], gonkaRequestId: null } as unknown as GateDecision
+  const id = record(accountId, frozen, d, sim, `recover protected SUI to ${to}`, w, 'pending')
+  return { outcome: 'awaiting_approval', funds_moved: false, approval_id: id, from: w.m_address, amount_sui: fmtSui(amount), note: 'Nothing was sent. Approve this recovery on your Ledger.' }
+}
+
 function record(
   accountId: string, frozen: FrozenTx,
   d: GateDecision, sim: unknown, intent: string, w: WalletRow, state: string
