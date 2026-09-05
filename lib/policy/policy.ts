@@ -101,6 +101,8 @@ export interface Evidence {
    * address ROTATES between transactions, so it can never be allowlisted.
    */
   gasOwner?: string
+  /** Deterministic recipient warnings for the risk reviewers. */
+  recipientRiskFlags?: string[]
   simulationOk: boolean
 }
 

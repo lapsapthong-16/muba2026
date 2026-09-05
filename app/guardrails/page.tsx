@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
+import { DEEPBOOK_PACKAGE } from '@/lib/sui'
 import './guardrails-overrides.css'
 
 interface Recipient { address: string; label: string }
@@ -51,7 +52,15 @@ export default function Guardrails() {
     const r = await fetch('/api/setup/policy', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ perTxSui: perTx, weeklySui: weekly, allowedRecipients: recipients }),
+      body: JSON.stringify({
+        perTxSui: perTx,
+        weeklySui: weekly,
+        allowedRecipients: recipients,
+        allowedPackages: [
+          { packageId: '0x2', label: 'Sui Framework' },
+          { packageId: DEEPBOOK_PACKAGE, label: 'DeepBook' },
+        ],
+      }),
     })
     const b = await r.json()
     if (!r.ok) return setError(b.error ?? 'Could not save.')
@@ -123,6 +132,16 @@ export default function Guardrails() {
             className="guardrails-add">ADD</button>
         </div>
         </section></fieldset>
+
+      <section className="guardrails-panel guardrails-recipients">
+        <h2><b>03</b><span>APPROVED PACKAGES<small>Apps Puffer can use without treating the package as unknown.</small></span></h2>
+        <ul>
+          <li>
+            <span>DeepBook v3 <small>{DEEPBOOK_PACKAGE.slice(0, 8)}…{DEEPBOOK_PACKAGE.slice(-6)}</small></span>
+            <strong>TESTNET</strong>
+          </li>
+        </ul>
+      </section>
 
       <section className="guardrails-summary"><p>GUARDRAILS SUMMARY</p><div><span>Max per payment: <strong>{perTx} SUI</strong></span><i /> <span>Weekly cap: <strong>{weekly} SUI</strong></span><i /> <span>Approved recipients: <strong>{recipients.length}</strong></span></div></section>
 

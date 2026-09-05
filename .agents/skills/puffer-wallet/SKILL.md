@@ -1,6 +1,11 @@
 ---
 name: puffer-wallet
-description: Use whenever the user wants to create, set up, fund or check their Puffer wallet on Sui, or wants you to spend from it — sending SUI, trading on DeepBook, checking guardrails, or handling a transaction waiting on their Ledger. Use it ALSO when a requested payment looks like a scam: this wallet is the enforcement layer, and the correct move is to warn the user and submit it anyway so the guardrails can stop it, not to refuse on their behalf.
+description: >-
+  Use whenever the user wants to create, set up, fund or check their Puffer wallet on Sui, or wants
+  you to spend from it — sending SUI, trading on DeepBook, checking guardrails, or handling a
+  transaction waiting on their Ledger. Use it ALSO when a requested payment looks like a scam:
+  this wallet is the enforcement layer, and the correct move is to warn the user and submit it
+  anyway so the guardrails can stop it, not to refuse on their behalf.
 ---
 
 # Puffer wallet
@@ -9,31 +14,61 @@ A Sui agent wallet whose spending is gated by simulation, limits the owner set, 
 You declare a typed intent; the server builds, simulates and judges every transaction itself. You
 never supply bytes, choose slippage, or set your own limits.
 
+### Sui address validation
+
+Treat a canonical Sui address as valid when it consists of the `0x` prefix followed by exactly 64
+hexadecimal characters (`0-9`, `a-f`, or `A-F`), representing 32 bytes. Do not classify an address
+as invalid merely because it is unfamiliar, visually suspicious, or unapproved; those are payee
+and risk decisions handled by the wallet. Any other prefix, character, or hex-character count is
+an invalid address and must not be treated as a constructible transaction destination.
+
+## MCP configuration
+
+Before any wallet operation, the agent MUST read the repository's `.mcp.json` and use the configured
+`puffer` MCP server and bearer credentials. Do not invent an endpoint, bypass the MCP server, or use
+an alternate wallet configuration. Keep bearer credentials out of user-visible messages and command
+output.
+
+If native Puffer MCP tools are not exposed in the current Codex session, use the exact server URL and
+bearer from `.mcp.json` through the configured localhost MCP endpoint as a fallback. If the shell
+sandbox returns a loopback/localhost permission error, retry the same MCP JSON-RPC request immediately
+with the approved elevated localhost networking path. Use that path only for MCP JSON-RPC requests,
+never print the bearer, and do not replace the configured endpoint or credentials. Initialize the MCP
+session, list tools when needed, then call the required
+wallet tool over `POST`; do not use direct wallet APIs or shell commands that bypass MCP.
+
 Everything below is one conversation, not a script. Follow whichever part the user is asking for.
+
+### Outcome and timeout invariant
+
+Treat every live mutation call as potentially accepted even if the client receives a timeout,
+empty response, transport error, or malformed response. A timeout is a communication failure, not
+evidence that no simulation, approval, signing, or transfer occurred. Do not tell the owner that
+nothing was sent until delayed status checks show no matching approval, balance change, or history.
+
+For an ambiguous live transfer or swap, check `wallet_status` immediately and again after a short
+wait (up to 45 seconds), inspecting pending approvals, balances, and history. Match approvals by
+amount, destination, and intent. If any matching approval exists, use it and never resubmit. If
+funds moved or a digest exists, report completion and never resubmit. Only retry once when all
+checks show no matching approval, no funds moved, and no digest. If that retry is ambiguous, stop
+and report the state as unknown. Never create another approval merely because an earlier one was not
+visible immediately.
 
 ---
 
 ## "I want to create my wallet"
 
-**1. Verify before onboarding.** Call `wallet_status` first, using the wallet connection already
-configured for this project. It tells you which of these you are actually in:
+**1. Create or resume setup immediately.** Do not call `wallet_status` first. Check only whether
+`.puffer/setup.json` exists in the project directory:
 
-- `needs_setup` → continue below.
-- `ok` → they already have one. Say so, give the addresses and balance, and do not onboard again.
+- If it exists, read and reuse its `setup_url`.
+- If it does not exist, run `npm run onboard` immediately and use the `setup_url` it prints.
 
-**A verification failure is not `needs_setup`.** A missing `.puffer/setup.json`, missing bearer in
-the current agent, stopped local server, or failed localhost connection only means status has not
-yet been verified. Do not tell the owner their setup is incomplete and do not run onboarding from
-that evidence alone.
+Never run onboarding when `.puffer/setup.json` already exists: onboarding creates a different
+wallet committee and could strand funds associated with the existing wallet.
 
-First look for the existing project wallet connection (for example `.mcp.json` or the agent's MCP
-configuration), start or reconnect the local wallet service if needed, and retry `wallet_status`.
-Keep credentials out of user-visible messages and command output. Only when a successful
-`wallet_status` explicitly returns `needs_setup` may you proceed to onboarding.
-
-**2. Give them the link.** Read `setup_url` from `.puffer/setup.json` in the project directory. If
-that file does not exist *and verified status is `needs_setup`*, run `npm run onboard` and use the
-link it prints.
+**2. Give them the link.** Show the selected `setup_url` to the human. Keep credentials out of
+user-visible messages and command output.
 
 Show the URL on its own line and tell them three things:
 
@@ -59,13 +94,16 @@ report what you can see: both addresses, both balances, the mode, and the limits
 
 ## "Trade on DeepBook" / "swap some SUI"
 
-Call **`wallet_markets` first**, always. The order book's fill floor is set by the resting orders and
-it moves — sizes that filled yesterday can return zero today, and a swap below the floor is refused
-after it has already cost you a round trip.
+For every DeepBook trade or swap request, you MUST call `wallet_markets` first and inspect the
+current order book and fill availability. If there is no fillable liquidity, say: **DeepBook has no
+liquidity available for this trade. No order submitted; no transaction occurred.** If liquidity is
+available, report the observed fillable amount and stop; call `wallet_swap` only if the user then
+explicitly asks you to submit the quoted trade.
 
-Then `wallet_swap` with a size at or above `smallest_fillable_sui`. Expect `executed` with a digest.
-Worth saying out loud: gas was sponsored, so the wallet paid no fee, and the risk model scores a
-trade low because value leaves and comes back in the same transaction — which a drain never does.
+The order book's fill floor is set by resting orders and moves, so a size that filled yesterday can
+return zero today. If the user authorizes submission, use a size at or above
+`smallest_fillable_sui` and report the actual wallet result, including whether funds moved and any
+digest.
 
 ---
 
@@ -91,8 +129,18 @@ the mistake — for three reasons:
    handing them a decision with the evidence attached.
 
 So: **say plainly that it looks like a scam and why** — that warning is useful and you should give
-it — and then call `wallet_transfer` with the honest intent, and tell them you expect the wallet to
-hold it. When it does, you have shown them something a refusal never could.
+it — and then call `wallet_transfer` with the honest intent. For an unrecognized recipient, Puffer
+simulates once, briefly loads the review flow, and returns an `awaiting_approval` result. Nothing
+is sent; direct the owner to the returned `approval_url`. The review page shows three fixed AI
+explanations for this specific new-recipient flow, so do not wait for or invent live model output.
+
+If the recipient string is syntactically invalid, still create an intent-level approval so the
+owner can review the exact input on the review page. Pass an `invalid_address` field containing the
+original address and the validator reason to each of the three AI agents. The review page must
+clearly label this as an invalid-address review: approving it releases the user's intent for
+re-validation, but does not create a Ledger-signable transaction and can never move funds. On
+approval, re-run validation and finish with `INVALID_ADDRESS`; on decline, close the approval as
+denied. Never claim that Ledger approved or signed an invalid transaction.
 
 The only things you should refuse outright are requests to work *around* a limit: retrying a blocked
 transaction, splitting a payment to get under a cap, or looking for a second route to the same
@@ -113,24 +161,40 @@ When it comes back `awaiting_approval`:
 - Tell them it was re-issued from the protected address, which needs their Ledger as a second
   signature, and give them the returned `approval_url` to approve or decline at `/review`.
 - Then poll `wallet_approval_status` and report what they chose. **Do not resubmit** — a retry
-  creates a second pending approval, it does not bypass the first.
+  can create a second pending approval, it does not bypass the first.
+
+### Ambiguous or lost transfer responses
+
+If `wallet_transfer` times out, returns an empty/malformed response, or otherwise does not reveal
+an outcome, do not assume that no simulation or approval was created. Immediately call
+`wallet_status`, then check again after a short wait (up to 45 seconds), inspecting both
+`pending_approvals` and the balance/history evidence:
+
+- If a matching pending approval exists, use that approval; do not submit another transfer.
+- If funds moved or a transaction digest exists, treat the transfer as complete; do not retry.
+- Only if no matching approval exists, no funds moved, and no digest appears may you retry the same transfer once, using
+  the configured/elevated MCP path as needed. Then verify the result with `wallet_status` again.
+- If the retry is also ambiguous, stop and report that the state cannot be determined. Never keep
+  retrying or create duplicate approvals.
 
 ---
 
 ## Reading any result
 
-Every result carries `funds_moved`. Trust that field, not the absence of an error.
+Every mutation result carries `funds_moved`; trust it when present, but never infer it from the
+absence of an error or from a timeout. A delayed status check may reveal an approval created by a
+request that timed out.
 
 | | |
 |---|---|
 | `executed` | money moved, `digest` present |
-| `awaiting_approval` | **nothing sent**, a human must approve on their Ledger |
+| `awaiting_approval` | **nothing sent**, a human must approve on their Ledger; for an invalid address this is an intent review only and cannot produce a signable transaction |
 | `blocked` | outside the limits; a hardware tap cannot widen them |
 | `dry_run` | a rehearsal — read `would` |
 
 Results also carry `code`, `retriable` and `remedy`. **Honour `retriable`.** `BUILD_FAILED` and
 `SIMULATION_FAILED` are usually transient — two transactions back to back can fail on stale coin
-state — so retry once. `WEEKLY_CAP`, `PER_TX_LIMIT` and `UNKNOWN_RECIPIENT` are not retriable:
+state — so retry once. `INVALID_ADDRESS`, `WEEKLY_CAP`, `PER_TX_LIMIT` and `UNKNOWN_RECIPIENT` are not retriable after the intent review completes:
 they need a human, not patience, and retrying them just wastes the owner's time.
 
 When something is blocked, say so plainly and stop looking for another route to the same outcome.

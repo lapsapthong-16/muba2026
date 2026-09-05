@@ -65,17 +65,6 @@ interface Pending {
   } | null
 }
 
-const UNKNOWN_RECIPIENT_AI_REVIEWS: NonNullable<Pending['risk_consensus']> = {
-  consensus: 'review_required' as const,
-  validVotes: 3,
-  lowVotes: 0,
-  votes: [
-    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, ballot: { score: 72, risk: 'high' as const, reasons: ['This destination is not on your approved payee list. Confirm the address on your Ledger before sending.'] } },
-    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, ballot: { score: 68, risk: 'high' as const, reasons: ['The transfer moves SUI to a new address with no asset returning to the wallet. Treat it as a new payment relationship.'] } },
-    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, ballot: { score: 75, risk: 'high' as const, reasons: ['The recipient has not been recognized by this wallet. The hardware review is the required confirmation step.'] } },
-  ],
-}
-
 export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean }) {
   const [supported, setSupported] = useState<boolean | null>(null)
   const [log, setLog] = useState<string[]>([])
@@ -246,6 +235,7 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
       await refresh()
       setApprovalPhase('idle')
       setBusy(false)
+      setLastOutcome((message) => message ? `${message} Review completed.` : 'Review completed.')
     }
   }
 
@@ -442,8 +432,8 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
                   Gonka consensus · {p.risk_consensus.lowVotes}/{p.risk_consensus.validVotes} low votes
                 </p>
                 <ul className="mt-2 space-y-2 text-sm text-zinc-800">
-                  {p.risk_consensus.votes.map((vote) => (
-                    <li key={vote.model} className="rounded border border-indigo-100 bg-white/70 p-2">
+                  {p.risk_consensus.votes.map((vote, i) => (
+                    <li key={`${vote.model}-${vote.requestId ?? 'vote'}-${i}`} className="rounded border border-indigo-100 bg-white/70 p-2">
                       <b>{vote.model}</b>{vote.fallbackFrom && vote.servedModel ? ` → fallback: ${vote.servedModel}` : ''}{' · '}{vote.ok ? `${vote.ballot!.score}/100 (${vote.ballot!.risk})` : `unavailable (${vote.abstainReason ?? 'unknown'})`}
                       <span className="block font-mono text-[11px] text-zinc-500">{vote.requestId ?? 'no request id'}{vote.devshardId ? ` · shard ${vote.devshardId}` : ''}</span>
                       {vote.ok && vote.ballot!.reasons.map((reason, i) => <span className="block text-xs text-zinc-600" key={i}>· {reason}</span>)}
@@ -523,9 +513,7 @@ function ApprovalReview({ busy, approvalPhase, device, pending, link, lastOutcom
   const amountMovement = p?.description?.movements.find((m) => m.direction === 'out')
     ?? p?.description?.movements.find((m) => m.direction === 'in')
   const amount = (amountMovement?.amount ?? '—').replace(/^-/, '')
-  // New recipients always use the same three review explanations. They are intentionally local
-  // UI copy, not a live-provider result, so an unavailable model cannot leave this review blank.
-  const consensus = p?.rule === 'UNKNOWN_RECIPIENT' ? UNKNOWN_RECIPIENT_AI_REVIEWS : p?.risk_consensus
+  const consensus = p?.risk_consensus
   const tldr = !consensus
     ? 'No AI receipt is available for this older approval. Your Ledger review is still required.'
     : consensus.consensus === 'low_quorum'
@@ -534,7 +522,6 @@ function ApprovalReview({ busy, approvalPhase, device, pending, link, lastOutcom
   return <main className="review-page"><section className="review-shell">
     <header className="review-hero"><div><p>PUFFER APPROVAL REVIEW</p><h1>{device ? (p ? 'ONE MOVE NEEDS YOU' : 'ALL CLEAR FOR NOW') : 'CONNECT BEFORE YOU REVIEW'}</h1></div><a className="review-puffer-link" href="/"><Image className="review-puffer" src="/assets/puffer/puffer-review-hands.png" alt="Puffer home" width={470} height={315} priority /></a></header>
     <div className={`review-status ${device ? 'is-connected' : ''}`}><span><i /> {device ? `LEDGER CONNECTED · ${device.address.slice(0, 8)}…${device.address.slice(-5)}` : 'LEDGER NOT CONNECTED'}</span>{device && <button onClick={onRefresh}>REFRESH</button>}</div>
-    {lastOutcome && <p className="review-outcome review-outcome--global">{lastOutcome}</p>}
     {!device ? <section className="review-state"><span className="review-state__number">01</span><h2>CONNECT YOUR LEDGER FIRST</h2><p>Your hardware device is the second signature. Nothing can be approved until Puffer can confirm it is here.</p><div className="review-link"><button onClick={() => onLink('usb')} className={link === 'usb' ? 'is-selected' : ''}>USB CABLE</button><button onClick={() => onLink('ble')} className={link === 'ble' ? 'is-selected' : ''}>BLUETOOTH</button></div><button className="review-primary" onClick={onConnect} disabled={busy}>{busy ? 'CONNECTING…' : 'CONNECT LEDGER →'}</button></section> : !p ? <section className="review-state review-empty"><span className="review-state__number">✓</span><h2>NO APPROVALS WAITING</h2><p>Your agent has no held transaction right now. Anything outside its guardrails will land here for your Ledger to review.</p><button className="review-primary" onClick={onRefresh}>CHECK AGAIN →</button></section> : <section className="review-card">
       <div className="review-facts"><div><small>AMOUNT</small><strong>{amount}</strong></div><div><small>TO</small><b>{recipient}</b><code>{p.from.slice(0, 7)}…{p.from.slice(-5)}</code></div><div><small>REASON</small><em>{p.rule.replaceAll('_', ' ')}</em></div></div>
       <div className="review-flow"><div><span>FROM (PROTECTED)</span><b>PUFFER GUARDIAN</b><code>{p.from.slice(0, 8)}…{p.from.slice(-5)}</code></div><i>→</i><div><span>TO (RECIPIENT)</span><b>{recipient}</b><code>{p.from.slice(0, 8)}…{p.from.slice(-5)}</code></div></div>
@@ -542,9 +529,9 @@ function ApprovalReview({ busy, approvalPhase, device, pending, link, lastOutcom
       <section className="review-ai" aria-label="Gonka AI consensus">
         <div className="review-ai__head"><div><small>GONKA AI CONSENSUS</small><h2>{consensus ? `${consensus.lowVotes}/${consensus.validVotes} LOW-RISK VOTES` : 'LEGACY APPROVAL'}</h2></div><span className={consensus?.consensus === 'low_quorum' ? 'is-low' : 'is-review'}>{consensus?.consensus === 'low_quorum' ? 'LOW QUORUM' : 'REVIEW REQUIRED'}</span></div>
         <p className="review-ai__tldr"><b>TL;DR</b> {tldr}</p>
-        {consensus && <div className="review-ai__votes">{consensus.votes.map((vote) => <article key={vote.model} className={vote.ok && vote.ballot?.risk === 'low' ? 'is-low' : 'is-alert'}><header><b>{vote.model}{vote.fallbackFrom && vote.servedModel ? ` → ${vote.servedModel}` : ''}</b><span>{vote.ok ? `${vote.ballot!.score}/100 · ${vote.ballot!.risk}` : `NO VOTE · ${vote.abstainReason ?? 'unavailable'}`}</span></header>{vote.ok && <p>{vote.fallbackFrom ? `Fallback used after ${vote.fallbackFrom} was unavailable. ` : ''}{vote.ballot!.reasons[0] ?? 'No additional explanation returned.'}</p>}<code>{vote.requestId ?? 'No Gonka request ID'}{vote.devshardId ? ` · shard ${vote.devshardId}` : ''}</code></article>)}</div>}
+        {consensus && <div className="review-ai__votes">{consensus.votes.map((vote, i) => <article key={`${vote.model}-${vote.requestId ?? 'vote'}-${i}`} className={vote.ok && vote.ballot?.risk === 'low' ? 'is-low' : 'is-alert'}><header><b>{vote.model}{vote.fallbackFrom && vote.servedModel ? ` → ${vote.servedModel}` : ''}</b><span>{vote.ok ? `${vote.ballot!.score}/100 · ${vote.ballot!.risk}` : `NO VOTE · ${vote.abstainReason ?? 'unavailable'}`}</span></header>{vote.ok && <p>{vote.fallbackFrom ? `Fallback used after ${vote.fallbackFrom} was unavailable. ` : ''}{vote.ballot!.reasons[0] ?? 'No additional explanation returned.'}</p>}<code>{vote.requestId ?? 'No Gonka request ID'}{vote.devshardId ? ` · shard ${vote.devshardId}` : ''}</code></article>)}</div>}
       </section>
       {!!p.adjustments?.allow_recipient && <label className="review-remember"><input type="checkbox" checked={!!optIn[p.id]?.allow} onChange={() => onTick(p.id, 'allow')} /> Remember this recipient</label>}
-      <div className="review-actions"><button className="review-primary" onClick={() => onApprove(p)} disabled={busy}>{approvalPhase === 'submitting' ? 'SUBMITTING APPROVAL…' : busy ? 'WAITING FOR LEDGER…' : 'APPROVE ON LEDGER →'}</button><button className="review-decline" onClick={() => onDecline(p)} disabled={busy}>DECLINE</button></div>
+      <div className="review-actions"><button className="review-primary" onClick={() => onApprove(p)} disabled={busy}>{approvalPhase === 'submitting' ? 'SUBMITTING APPROVAL…' : busy ? 'WAITING FOR LEDGER…' : 'APPROVE ON LEDGER →'}</button><button className="review-decline" onClick={() => onDecline(p)} disabled={busy}>DECLINE</button></div>{lastOutcome && <p className="review-outcome">{lastOutcome}</p>}
     </section>}</section>{p && <p className="review-lock"><img src="/assets/puffer/lock-icon.png" alt="" /> Puffer cannot move this address alone.</p>}</main>
 }

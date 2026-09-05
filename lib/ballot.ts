@@ -52,6 +52,7 @@ function buildUserMessage(ev: Evidence, self: string, agentIntent: string): stri
     wallet: self, note: 'SUI has 9 decimals. Reason about amount, already converted.',
     balance_changes: ev.balanceChanges.map((b) => ({ coin_type: b.coinType, address: b.address, amount: human(b.amount, b.coinType), amount_base_units: b.amount, is_wallet: b.address === self })),
     gas_used: ev.gasUsed, move_packages: ev.movePackages,
+    recipient_risk_flags: ev.recipientRiskFlags ?? [],
     object_transfers: (ev.objectTransfers ?? []).map((o) => ({ object_type: o.objectType, to: o.to, is_capability: o.isCapability })), simulation_ok: ev.simulationOk,
   }
   const escaped = JSON.stringify(bundle, null, 1).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')

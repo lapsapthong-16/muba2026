@@ -9,6 +9,7 @@ body:has(.guardrails-page) .guardrails-status,body:has(.guardrails-page) .guardr
 body:has(.guardrails-page) .guardrails-wallet-balances{animation:guardrails-fade-up .5s .14s ease both}
 body:has(.guardrails-page) .guardrails-panel{transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}
 body:has(.guardrails-page) .guardrails-panel:hover{transform:translateY(-3px);border-color:rgba(231,251,54,.55);box-shadow:0 20px 36px rgba(0,0,0,.2)}
+body:has(.guardrails-page) .guardrails-shell > .guardrails-panel{margin-top:22px}
 body:has(.guardrails-page) button{transition:transform .18s ease,filter .18s ease,box-shadow .18s ease}
 body:has(.guardrails-page) button:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.08)}
 body:has(.guardrails-page) button:active:not(:disabled){transform:translateY(0) scale(.98)}
