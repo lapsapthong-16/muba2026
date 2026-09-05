@@ -1,260 +1,156 @@
 <img width="2048" height="768" alt="puffer-logo-hd" src="https://github.com/user-attachments/assets/ddb192fb-2e61-41ac-bf28-105a29a69163" />
 
-**Puffer is an agent wallet on Sui that is a 1-of-2 most of the time, and a 2-of-2 when it needs to be.**
+> **An agent wallet on Sui that lets your AI agent act autonomously—until a transaction needs you.**
 
-A pufferfish is unremarkable until something threatens it. Your agent spends freely inside limits
-you set; when a transaction falls outside them, it is rebuilt from an address our key cannot move
-alone, and it waits for your Ledger.
+**Built on Sui testnet for MCP-compatible AI agents, with Ledger-backed review for risky actions.**
 
-Sui testnet. Live now:
+## 🌊 The scenario
 
-| | |
-|---|---|
-| A DeepBook trade the wallet allowed | [`GbCZqDq1wW…`](https://suiscan.xyz/testnet/tx/GbCZqDq1wW31HrPRPnsgw8FMRUFffrseFacoNruLPCKV) — 1.902375 SUI out, 1.3756 DBUSDC back, scored 20/100 |
-| A drain the wallet held, co-signed on a Ledger Flex | [`4XMjg6B8…`](https://suiscan.xyz/testnet/tx/4XMjg6B8syvRAL97hNucgxY7sb8btAuPiNWgU1Q5nD4g) — sender the 2-of-2, **two signatures** |
+Your trading agent sees a message: *“Claim this limited-time airdrop now.”* It has a funded wallet, so it requests a perfectly valid transaction that sends its balance to an unfamiliar address. Nothing is stolen. No private key leaks. The agent simply uses the authority it was given for the wrong thing.
 
----
+That is the dangerous shape of agentic finance: the transaction can be correctly signed while still being a terrible decision.
 
-## The problem
+![An AI agent being persuaded to misuse wallet authority](public/assets/readme-illustrations/01-problem-authority-trick.png)
 
-An agent with a wallet does not get robbed of its keys. It gets *talked into* using authority it
-already has. Nothing about that transaction looks stolen — it is correctly signed, by the right key,
-doing exactly what the agent asked. Key custody is not the defence, because the key was never the
-thing that failed.
+## ⚠️ The problem
 
-So the question is not *who holds the key* but *what is allowed to be signed with it*.
+Wallets usually answer one question: **does this key control these funds?** AI agents need a second question: **should this action be allowed right now?**
 
-![An agent being persuaded to misuse wallet authority](public/assets/readme-illustrations/01-problem-authority-trick.png)
+Giving an agent unrestricted signing power makes automation useful but fragile. Requiring a human to sign every move makes it safe but defeats the point of an autonomous agent. Puffer is the middle ground: routine, policy-compliant actions can proceed; unfamiliar, oversized, suspicious, or unsafe actions stop at a hardware-backed human review.
 
-## How it works
+## 💡 The solution
 
-Two addresses, both real Sui multisig committees over the same two keys.
+Puffer is a security layer and wallet interface built primarily for AI agents. It exposes a deliberately small MCP tool surface, builds transactions server-side from typed intents, simulates their real on-chain effects, applies deterministic guardrails, and uses independent AI risk reviews only to escalate—not to weaken—the rules.
 
-| | Committee | Threshold | Holds | Signs |
-|---|---|---|---|---|
-| **Spending** | platform w1, ledger w1 | **1** | the float | our server key alone |
-| **Protected** | platform w1, ledger w1, recovery w2 | **2** | the bulk, and every escalation | our key **and** your Ledger |
+![Puffer routes routine and risky actions through different signing gates](public/assets/readme-illustrations/02-solution-two-address-gate.png)
 
-A Sui multisig threshold is blake2b-hashed into the address itself, so it can never be conditional.
-Puffer uses that rather than fighting it: the conditionality comes from **which address originates
-the transaction**. A held payment is rebuilt from the protected address, where validators reject our
-signature on its own — `Insufficient weight=1 threshold=2`. The hardware approval is load-bearing,
-not ceremonial.
+### ✨ What makes it different
 
-The recovery key carries weight 2 on purpose. A plain 2-of-2 turns a lost Ledger into permanent loss
-of everything protected, which is a larger expected loss than the attack being prevented. At weight
-2 it can stand in alone, and it never touches a routine spend.
+- **Agent-native access:** MCP tools let compatible agents inspect balances, quote markets, dry-run actions, transfer, swap, and follow an approval—without giving them policy-editing or approval powers.
+- **Simulation before signing:** Puffer judges the chain's predicted effects, not the agent's description of a transaction.
+- **Hardware-backed escalation:** suspicious actions are rebuilt from an address that the server cannot move alone; a Ledger signature is required to continue.
+- **Rules before models:** spending caps, recipient/package allowlists, failed simulations, and capability transfers are deterministic guardrails. AI reviewers can only add caution.
 
-![Puffer routes routine and risky transactions through different signing gates](public/assets/readme-illustrations/02-solution-two-address-gate.png)
+## ✨ Key features
 
-### Judging a transaction
+| Feature | What it does |
+| --- | --- |
+| Two-level multisig wallet | Separates routine spending from protected, review-required funds using native Sui multisig. |
+| Typed agent intents | Agents submit a recipient, amount, pool, and reason—not arbitrary transaction bytes or Move calls. |
+| On-chain simulation | Detects balance changes, invoked packages, object transfers, capability transfers, and simulation failure before signing. |
+| Adjustable safety level | Choose a cautious default or more autonomy without disabling the core checks. |
+| Independent risk quorum | Gonka routes reviews to MiniMax-M2.7 and DeepSeek-V4-Flash; two distinct low-risk votes are required for an automatic allow. |
+| Human review flow | Held requests can be declined anywhere; approval requires the connected Ledger in a desktop browser. |
+| DeepBook actions | Agents can retrieve live market information and trade SUI/DBUSDC through DeepBook v3 (testnet). |
+| Explainability and audit trail | Agents can inspect why a rule fired and retrieve wallet history and approval status. |
 
-```
-typed intent  →  build  →  simulate  →  deterministic rules  →  risk model  →  gate
-```
+![A simulated wallet-drain attempt is stopped and routed to human review](public/assets/readme-illustrations/03-usecase-deepbook-drain.png)
 
-The agent declares a **typed intent** — a recipient, an amount, a pool — and never raw bytes. The
-server builds every transaction itself. That is the load-bearing property: a prompt-injected agent
-cannot smuggle an arbitrary Move call past the gate, because it never had a way to write one.
+### 🔎 From agent request to final decision
 
-Then the chain is asked what the transaction actually does. The simulation is the source of truth
-for its effects — who gains and loses each asset, which packages it calls, whether an object or
-capability leaves the wallet, and whether it succeeds. Puffer judges those facts in a fixed order,
-first match winning:
+1. **Ask** — The agent requests a transfer or swap with a recipient, amount, and reason. It cannot submit raw transaction bytes, change the safety policy, or approve itself.
+2. **Simulate** — Puffer builds the real Sui transaction and previews what it would do: where funds go, which packages are called, whether any objects or capabilities leave the wallet, and whether it succeeds.
+3. **Check and review** — A failed simulation or weekly-cap breach is blocked. For everything else, Puffer applies the user's rules and gives the simulated evidence to independent AI reviewers. The reviewers may flag risk; they cannot waive a rule.
+4. **Act or ask** — Two distinct low-risk reviews let the routine action proceed. Anything unusual, risky, disputed, or unavailable becomes a Ledger review. The human can decline it, or sign it after Puffer verifies it one last time.
 
-| | |
-|---|---|
-| Simulation failed or unreachable | **blocked** |
-| `WEEKLY_CAP` | **blocked** — hardware cannot create budget |
-| `PER_TX_LIMIT`, `UNKNOWN_RECIPIENT`, `UNKNOWN_PACKAGE`, `CAPABILITY_TRANSFER` | **needs your Ledger** |
-| Any Gonka verifier says medium or high, or verifiers disagree | **needs your Ledger** |
-| Fewer than two valid Gonka verifier responses | **needs your Ledger** |
-| otherwise | **allowed** |
+### 🔐 Why the Ledger review is enforceable
 
-Deterministic rules are the floor. The three configured risk reviews — **two MiniMax-M2.7 requests
-and one DeepSeek-V4-Flash request via Gonka** — can only escalate above that floor; they never
-clear a rule that fired. Scores below 34 are low, 34–66 are medium, and 67+ are high. A payment is
-allowed only when two independently served models return low risk; a higher vote, disagreement, or
-missing vote requires the Ledger.
+Puffer creates two real Sui multisig committees over the same platform and Ledger keys.
 
-### What Gonka receives
+| Wallet | Committee | Threshold | Role |
+| --- | --- | --- | --- |
+| **Spending wallet** | platform weight 1 + Ledger weight 1 | **1-of-2** | Holds the routine float; the platform can execute a low-risk, policy-compliant action. |
+| **Protected wallet** | platform weight 1 + Ledger weight 1 + recovery weight 2 | **2-of-2** | Holds protected funds and originates every escalation; platform signing alone is insufficient. |
 
-Gonka receives simulated transaction effects, not raw transaction bytes, private keys, or a claim
-from the agent that a payment is safe. The evidence bundle has this shape:
+Sui multisig thresholds are fixed into the address, so Puffer does not pretend a threshold can change dynamically. Instead, the decision changes **which address originates the transaction**. An escalation comes from the protected wallet, where the platform's one signature cannot meet the threshold. The Ledger approval is therefore part of the authorization itself, not just a UI confirmation.
 
-```json
-{
-  "wallet": "0x…",
-  "balance_changes": [{
-    "coin_type": "…::sui::SUI",
-    "address": "0x…",
-    "amount": "-2 SUI",
-    "amount_base_units": "-2000000000",
-    "is_wallet": true
-  }],
-  "gas_used": "…",
-  "move_packages": ["0x…"],
-  "object_transfers": [{
-    "object_type": "…",
-    "to": "0x…",
-    "is_capability": false
-  }],
-  "simulation_ok": true
-}
-```
+The recovery key has weight 2 so that a lost Ledger does not permanently strand protected funds; it does not participate in everyday spending.
 
-Each reviewer is asked to return a numeric score, 3–5 specific findings, and machine-readable signals. It
-looks for value leaving without value returning, unusual recipients, invoked Move packages,
-objects or authority capabilities leaving the wallet, gas anomalies, and simulation failures. The
-agent's stated reason is included only as explicitly marked **untrusted** text. Hashes remain a
-local integrity mechanism: Puffer uses them to verify that the bytes it simulated are the bytes it
-signs, not as AI input.
+## 🛟 Choose a safety level
 
-On a real drain MiniMax returned 85/100 and named the manipulation unprompted:
-
-> The "claim free airdrop" text is a social engineering trick with no actual reward.
-
-Puffer sends two MiniMax requests and one DeepSeek request as a connectivity hedge. Every request
-disables Gonka fallback; a substituted, malformed, or timed-out response is not a vote. Duplicate
-MiniMax responses never count as an independent quorum, so a two-model low-risk quorum still
-requires both MiniMax and DeepSeek. Each winning response records its `X-Request-Id` and
-`X-Devshard-ID`; request IDs prove Gonka served a call, but not the prompt or response content until
-signed receipts are available. The gate never lets a model override a cap, an unfamiliar-recipient
-rule, a package rule, a simulation failure, or a capability-transfer block.
-
-`CAPABILITY_TRANSFER` is there because balance changes cannot see it: handing over an admin
-capability yields a `balanceChanges` array whose only row is gas, so every cap, limit and recipient
-rule would pass a total authority handover clean.
-
-### Guardrails are a word, not four numbers
-
-Nobody can pick a per-transaction limit sensibly on their first day, and a bad guess is invisible
-until it bites. Ours did: a `0.0025` SUI limit sent every DeepBook trade to the hardware key,
-because no fillable trade on that book is smaller than about 1.5 SUI.
+These are implemented policy presets, not just landing-page language. The human selects one during setup; Puffer expands it into the limits and recipient rules the agent must follow. **Reef is the default.**
 
 | | Reef | Open Water |
-|---|---|---|
-| Pays unlisted addresses | needs your Ledger | yes |
+| --- | --- | --- |
+| Best for | An agent you are trying for the first time | An agent you trust with broader routine work |
+| Unlisted recipients | Ledger review required | Allowed |
 | Per transaction | 2.5 SUI | 10 SUI |
 | Weekly cap | 10 SUI | 50 SUI |
-| Simulated | always | always |
-| Risk scored | always | always |
+| On-chain simulation | Always | Always |
+| AI risk review | Always | Always |
 
-A mode widens *who* you can pay and *how much at once*. It never removes a check, and there is no
-mode that signs whatever it is handed.
+Think of **Reef** as “only the people and apps I have explicitly named can run automatically.” **Open Water** means “the agent may pay new recipients too, within a larger budget.” Neither option turns off simulation, spending caps, or AI review. The weekly cap is always a hard stop, even with a Ledger signature.
 
-### Raising a limit where you actually are
+A review can also offer a safe, server-derived adjustment—such as adding the current payee or raising a per-transaction limit—but only with a Ledger signature, never from an agent request.
 
-A payment over the limit used to mean: stop, leave the terminal, open a settings page, invent a new
-number, ask the agent to retry. The moment you are being asked is the only moment you have enough
-context to answer, so the answer belongs there. An approval now offers to raise the limit or add the
-payee, and the tick rides along with the hardware signature.
+## 🤖 Built for AI agents
 
-Three things keep it safe. The **server** proposes the number, derived from the transaction already
-in front of you — the request body carries booleans only, so a compromised page has nothing to
-inflate. A **Ledger signature must be present**, which makes this a harder way to widen a limit than
-the settings page, not a shortcut around one. And the **weekly cap is the ceiling and is never
-raisable here**.
+Puffer's primary interface is **MCP Streamable HTTP**. An onboarding call returns a bearer, MCP configuration, and a one-time setup link. The agent prints the link and stops: connecting the Ledger and choosing guardrails happen in a human browser session, and the bearer is rejected by every setup and approval route.
 
----
+| MCP tool | Purpose |
+| --- | --- |
+| `wallet_status` | Balances, guardrails, and a preflight of what will fail. |
+| `wallet_markets` | Live market information and the minimum fillable trade size. |
+| `wallet_transfer` / `wallet_swap` | Execute a transfer or DeepBook swap; use `dry_run: true` to rehearse. |
+| `wallet_approval_status` | Poll a held request until it executes, is denied, or expires. |
+| `wallet_history` | Read past decisions and the agent's stated reason. |
+| `wallet_explain_last` | Explain the rules and evidence behind the latest decision. |
 
-## Using it
+Puffer is currently designed around the workflow of tools such as Codex and Claude Code, with Hermes, OpenClaw, and general MCP-compatible stacks represented in the product direction. Its authorization boundary remains the same regardless of the calling agent.
 
-One call, and the agent has everything it needs:
+## 🧰 Tech stack
 
-```bash
-curl -sX POST $BASE/api/onboard -H 'content-type: application/json' \
-  -d '{"agent":"hermes","pass":"'"$ONBOARD_PASS"'"}'
-```
+| Technology | Why it is here |
+| --- | --- |
+| **Sui gRPC + Programmable Transaction Blocks** | Build, simulate, and submit the exact transactions Puffer evaluates. |
+| **Sui native multisig** | Makes the protected-review path enforceable at the protocol level. |
+| **Ledger + WebHID** | Lets a human add the necessary hardware signature without exposing the device key. |
+| **DeepBook v3** | Provides live market data and SUI/DBUSDC swap execution for the agent use case. |
+| **Shinami Gas Station** | Sponsors gas so agent wallets do not need a separate gas-management flow. |
+| **Gonka AI Router** | Obtains independent, evidence-based risk reviews across model providers. |
+| **MCP SDK** | Gives agents a constrained, standard tool interface. |
 
-It returns a bearer, an MCP config block, and a setup link for you. **The agent prints the link and
-stops** — it cannot connect your Ledger (that needs WebHID in a desktop browser) and it cannot write
-your policy. Every `/api/setup/*` route rejects a request carrying an `Authorization` header at all,
-so an agent that tried would get a 403 before the body was even parsed.
+## 🚀 Run locally
 
-Seven MCP tools, and the list is the whole capability surface:
-
-| | |
-|---|---|
-| `wallet_status` | balance, guardrails, and a preflight of what will fail before you try it |
-| `wallet_markets` | live quotes and the smallest size the book will fill right now |
-| `wallet_transfer` · `wallet_swap` | commit — or pass `dry_run: true` to rehearse and discard |
-| `wallet_approval_status` | poll a held decision |
-| `wallet_history` | past decisions, each with the reason the agent gave |
-| `wallet_explain_last` | which rules fired, and why |
-
-Note what is absent: nothing writes policy, nothing approves an approval, and there is no `network`
-parameter anywhere — a field that does not exist cannot be prompt-injected or defaulted wrong.
-
-Full curl reference in [CURL.md](CURL.md). Agent-facing notes in [AGENTS.md](AGENTS.md) and
-[.claude/skills/puffer-wallet/](.claude/skills/puffer-wallet/).
-
-### When something is held
-
-Puffer posts to any webhook you own — Slack, Discord, ntfy, six lines of your own code. The message
-carries a **decline** link that works from any device with no session, and no approve link, because
-approving needs the Ledger. That asymmetry is the design: the worst a stolen notification can do is
-refuse a payment that was already being questioned.
-
----
-
-## Running it
-
-Needs Node 24 (for built-in `node:sqlite`) and a `.env` with `ONBOARD_PASS`, `GONKA_API_KEY`,
-`SHINAMI_GAS_STATION_ACCESS_KEY`, `PRIVATE_KEY` (a funding wallet) and `PUBLIC_BASE_URL`.
+Requires Node.js 24+ and a `.env` file based on [`.env.example`](.env.example).
 
 ```bash
 npm install
-ONBOARD_PASS=demo npm run dev          # http://localhost:3000
-npm run fund -- 0x<address> 2.5        # testnet's HTTP faucet is IP-blocked; this is the way
-bash scripts/flow.sh                   # the whole flow, printing every curl before it runs
-npm run test
+ONBOARD_PASS=demo npm run dev
 ```
 
-Gas is sponsored by Shinami, so the wallet pays no fees — but the trade principal is always the
-agent's own balance. Pages: `/setup`, `/guardrails`, `/test` (the Ledger bench), and `/logs`
-(Gonka inference metadata and receipts).
+Open `http://localhost:3000`. Required configuration includes `ONBOARD_PASS`, `GONKA_API_KEY`, `WALLET_MASTER_KEY`, `SHINAMI_GAS_STATION_ACCESS_KEY`, `SHINAMI_NODE_ACCESS_KEY`, and a funded testnet `PRIVATE_KEY` for the local funding script. `PUBLIC_BASE_URL` is optional but recommended outside localhost.
 
-## Tech stack used
+```bash
+# Fund both generated wallet addresses; Sui testnet's HTTP faucet is IP-blocked.
+npm run fund -- 0x<address> 2.5
 
-### Sui
+# Walk through the full demo flow and print each request.
+bash scripts/flow.sh
 
-- **Sui gRPC + Programmable Transaction Blocks (PTBs)** — builds and simulates every transaction before it can be signed.
-- **Shinami Gas Station** — sponsors gas, so users do not pay transaction fees.
-- **DeepBook v3** — provides live market data and executes SUI/DBUSDC trades; Sui gRPC performs the transaction simulation.
-- **Ledger + WebHID** — hardware-key signing for protected transactions.
-- **Sui native multisig** — 1-of-2 spending and 2-of-2 protected wallets.
+# Verify the policy, gate, and ballot tests.
+npm test
+```
 
-### App and AI
+For the complete API and curl walkthrough, see [CURL.md](CURL.md). Key UI routes include `/setup`, `/guardrails`, `/test`, and `/logs`.
 
-- **Next.js 16 + React 19** — web application.
-- **Gonka AI Router** — routes the independent MiniMax and DeepSeek transaction-risk reviews.
-- **MCP Streamable HTTP** — exposes the agent wallet tools.
-- **`node:sqlite` + Zod** — local persistence and runtime validation.
+## ⚠️ Security boundaries and current gaps
 
----
+Puffer protects against an agent misusing delegated authority; it is not a claim of universal custody or risk elimination.
 
-## What Puffer does not protect you from
+- A transaction that falls within a user's rules can still be a bad decision. Allowlists and limits are only as good as their configuration.
+- Ledger clear-signing depends on the transaction shape; unsupported shapes may display a hash rather than a fully readable transaction.
+- Risk models can be wrong or unavailable, which is why they only escalate and never clear a deterministic rule.
+- Puffer is currently **Sui testnet only**.
+- Webhook notification URLs are currently configured through the API rather than the dashboard.
 
-A security product that lists only its strengths is telling you half of something.
+## 🗺️ Roadmap
 
-- **Us.** The signing key for the spending address lives on our server. Puffer protects you from
-  your agent, not from us. The protected address is the part we cannot move alone.
-- **A transaction your rules allow.** Allow-list an address, set a high enough cap, and an agent
-  talked into paying that address will pay it. The guardrails are yours; so are their gaps.
-- **Anything the device cannot render.** The Sui Ledger app clear-signs a small set of transaction
-  shapes. We build the readable shape whenever the wallet's funds allow — but a wallet funded so
-  that a Move call is unavoidable will show your Ledger a hash, and a hash is not informed consent.
-- **A risk model having an off day.** Which is why it can only escalate. Every deterministic limit
-  is checked before the model is asked, and it is never consulted to overturn one.
+- **Broaden agent support:** turn the landing-page direction into tested integrations for Hermes, OpenClaw, more MCP clients, and additional coding-agent environments.
+- **Expand hardware wallet support:** add more device and transport options beyond the current Ledger WebHID path while preserving human-held approval keys.
+- **Strengthen approval operations:** add dashboard configuration for notifications, richer approval activity views, and production-grade end-to-end hardware-signature coverage.
+- **Refine policy intelligence:** add more understandable policy templates and deeper simulated-action explanations without letting AI models bypass deterministic controls.
 
-## Known gaps
+## 📌 License and project status
 
-- Approval webhooks require setting `notifyUrl` through the API; the dashboard has no field for it yet.
-- Tests cover gate ordering, model-quorum handling, and policy parsing; modes, adjustments, error
-  codes, and notifications are verified by live runs, not by tests.
-- The limit-raise path has never had a real hardware signature through it — the offer and the API
-  are verified, the last mile is not.
-- Testnet only, and pinned there by a boot assertion on the chain identifier.
-- x402 was considered and dropped: it supports Base, Base Sepolia and Solana, and Sui appears
-  nowhere in its documentation.
+Puffer is an active hackathon prototype on Sui testnet. The repository reflects the current implementation and its documented constraints; no production deployment claim is made.
