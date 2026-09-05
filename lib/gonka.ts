@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { getDb } from './db'
 
 // Server-only module. Next.js loads `.env` itself, so there is no dotenv shim here —
 // and no top-level side effects, so importing this file never fires a network call.
@@ -76,6 +77,8 @@ export interface GonkaCallResult {
   fallback: string | null
   /** The Gonka Request ID — the X-Request-Id response header (README §3.2 item 1). */
   requestId: string | null
+  /** The serving shard, retained alongside the request id for receipt/audit diagnostics. */
+  devshardId: string | null
   content: string | null
   usage?: OpenAI.Completions.CompletionUsage
   raw: OpenAI.Chat.Completions.ChatCompletion
@@ -116,6 +119,7 @@ async function withSaturationRetry<T>(fn: () => Promise<T>, attempts = 5): Promi
 export async function callGonka(options: GonkaCallOptions): Promise<GonkaCallResult> {
   const client = options.client || getGonkaClient()
   const modelId = resolveModelId(options.model)
+  const startedAt = Date.now()
 
   // Build message array from options
   let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
@@ -135,32 +139,47 @@ export async function callGonka(options: GonkaCallOptions): Promise<GonkaCallRes
   }
 
   // .withResponse() so the X-Request-Id header survives — a bare create() throws it away.
-  const { data: response, response: httpResponse } = await withSaturationRetry(
-    () =>
-      client.chat.completions
-        .create(
-          {
-            model: modelId,
-            messages,
-            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-            ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-            ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
-          },
-          options.signal ? { signal: options.signal } : undefined
-        )
-        .withResponse(),
-    options.attempts ?? 5
-  )
+  let data: Awaited<ReturnType<typeof client.chat.completions.create>>
+  let httpResponse: Response
+  try {
+    ({ data, response: httpResponse } = await withSaturationRetry(
+      () =>
+        client.chat.completions
+          .create(
+            {
+              model: modelId,
+              messages,
+              ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+              ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+              ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
+            },
+            options.signal ? { signal: options.signal } : undefined
+          )
+          .withResponse(),
+      options.attempts ?? 5
+    ))
+  } catch (error) {
+    const status = (error as { status?: number }).status ?? null
+    getDb().prepare(`INSERT INTO gonka_calls(model, outcome, status_code, latency_ms, created_at) VALUES (?, ?, ?, ?, ?)`).run(
+      modelId, options.signal?.aborted ? 'cancelled' : status ? 'failed' : 'failed', status, Date.now() - startedAt, Date.now()
+    )
+    throw error
+  }
 
-  return {
+  const result = {
     model: modelId,
-    modelServed: response.model ?? null,
+    modelServed: data.model ?? null,
     fallback: httpResponse.headers.get('x-gonka-fallback'),
     requestId: httpResponse.headers.get('x-request-id'),
-    content: response.choices[0]?.message?.content ?? null,
-    usage: response.usage,
-    raw: response,
+    devshardId: httpResponse.headers.get('x-devshard-id'),
+    content: data.choices[0]?.message?.content ?? null,
+    usage: data.usage,
+    raw: data,
   }
+  getDb().prepare(`INSERT INTO gonka_calls(model, model_served, request_id, devshard_id, outcome, status_code, latency_ms, total_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    result.model, result.modelServed, result.requestId, result.devshardId, result.fallback ? 'substituted' : 'success', httpResponse.status, Date.now() - startedAt, result.usage?.total_tokens ?? null, Date.now()
+  )
+  return result
 }
 
 /**

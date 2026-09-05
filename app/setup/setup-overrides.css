@@ -1,2 +1,13 @@
 /* Keep setup's page field aligned with the shared product header. */
 body:has(.setup-page) .setup-page{background:#031246}
+html:has(.setup-page){scroll-behavior:smooth}
+
+@keyframes setup-fade-up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+body:has(.setup-page) .setup-hero{animation:setup-fade-up .55s ease both}
+body:has(.setup-page) .setup-statusbar{animation:setup-fade-up .55s .08s ease both}
+body:has(.setup-page) .setup-step{transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}
+body:has(.setup-page) .setup-step:hover{transform:translateY(-3px);border-color:rgba(231,251,54,.5);box-shadow:0 22px 38px rgba(0,0,0,.22)}
+body:has(.setup-page) button{transition:transform .18s ease,filter .18s ease,box-shadow .18s ease}
+body:has(.setup-page) button:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.08)}
+body:has(.setup-page) button:active:not(:disabled){transform:translateY(0) scale(.98)}
+@media(prefers-reduced-motion:reduce){body:has(.setup-page) *{animation:none!important;transition:none!important}}

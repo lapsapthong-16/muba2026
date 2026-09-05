@@ -7,6 +7,7 @@ import { describe } from '@/lib/describe'
 import { PolicySchema, evaluate, type Policy } from '@/lib/policy/policy'
 import { spentLast7d } from '@/lib/db'
 import { SUI_DECIMALS } from '@/lib/sui'
+import { requestConsensus } from '@/lib/ballot'
 
 /**
  * IN-BAND ADJUSTMENT — the best idea in MetaMask's docs, and the fix for our worst moment.
@@ -133,6 +134,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!row) return Response.json({ error: 'No such decision.' }, { status: 404 })
 
   const decision = JSON.parse(row.verdict_json)
+  const riskConsensus = decision.consensus ?? (typeof decision.ballotScore === 'number'
+    ? {
+        legacy: true,
+        consensus: decision.ballotRisk === 'low' ? 'low_quorum' : 'review_required',
+        validVotes: 1,
+        lowVotes: decision.ballotRisk === 'low' ? 1 : 0,
+        votes: [{ model: 'Legacy MiniMax ballot', ok: true, requestId: decision.gonkaRequestId ?? null, devshardId: null,
+          ballot: { score: decision.ballotScore, risk: decision.ballotRisk, reasons: decision.ballotReasons ?? [] } }],
+      }
+    : null)
   const stored = JSON.parse(row.evidence_json) as { sim?: { evidence?: unknown } }
   const evidence = (stored?.sim as { evidence?: unknown })?.evidence
   let description = null
@@ -181,11 +192,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     expires_in_seconds: Math.max(0, Math.round((row.expires_at - Date.now()) / 1000)),
     rule: decision.rule,
     reasons: decision.reasons,
-    risk: decision.ballotRisk,
-    risk_score: decision.ballotScore ?? null,
-    risk_reasons: decision.ballotReasons ?? [],
-    risk_latency_ms: decision.ballotLatencyMs ?? null,
-    gonka_request_id: decision.gonkaRequestId,
+    risk_consensus: riskConsensus,
     evidence: JSON.parse(row.evidence_json),
     /** The exact bytes to hand the device. Nothing rebuilds them. */
     tx_bytes_b64: row.tx_bytes_b64,
@@ -294,6 +301,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       { status: 500 }
     )
   }
+
+  // The bytes are fixed, but their simulated effects can change with live chain state. Re-run and
+  // retain the model review for the effects being executed. A held payment is already behind the
+  // Ledger gate, so a high-risk fresh review explains the tap; it does not void it on its own.
+  const freshConsensus = await requestConsensus(fresh.evidence, row.sender, row.intent)
+  getDb().prepare('UPDATE decisions SET ballot_json=? WHERE id=?').run(JSON.stringify(freshConsensus), id)
 
   const frozen = {
     bytes,

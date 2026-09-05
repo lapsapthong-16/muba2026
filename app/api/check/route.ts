@@ -1,10 +1,10 @@
 import { requireAgent, AuthError } from '@/lib/auth'
 import { getWallet } from '@/lib/wallet'
-import { getDb, spentLast7d } from '@/lib/db'
+import { spentLast7d } from '@/lib/db'
 import { buildTransfer, buildTransferAll, buildSwap, quoteSwap } from '@/lib/tx'
 import { simulate } from '@/lib/evidence'
 import { PolicySchema, evaluate } from '@/lib/policy/policy'
-import { requestBallot, RISK_BANDS } from '@/lib/ballot'
+import { requestConsensus } from '@/lib/ballot'
 import { gate } from '@/lib/gate'
 import { SUI_DECIMALS } from '@/lib/sui'
 
@@ -99,8 +99,10 @@ export async function POST(req: Request) {
   }
 
   const verdict = evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct))
-  const ballot = await requestBallot(sim.evidence, w.h_address, body!.reason ?? '', 30_000)
-  const decision = gate(sim, verdict, ballot)
+  const consensus = verdict.verdict !== 'deny'
+    ? await requestConsensus(sim.evidence, w.h_address, body!.reason ?? '')
+    : null
+  const decision = gate(sim, verdict, consensus)
 
   const sui = (raw: string) => (Number(raw) / 10 ** SUI_DECIMALS).toFixed(6).replace(/\.?0+$/, '')
 
@@ -126,18 +128,7 @@ export async function POST(req: Request) {
       move_packages: sim.evidence.movePackages,
       objects_leaving: sim.evidence.objectTransfers ?? [],
     },
-    risk: ballot.ok
-      ? {
-          score: ballot.ballot.score,
-          band: ballot.ballot.risk,
-          bands: RISK_BANDS,
-          reasons: ballot.ballot.reasons,
-          signals: ballot.ballot.signals,
-          model: ballot.model,
-          gonka_request_id: ballot.requestId,
-          latency_ms: ballot.latencyMs,
-        }
-      : { abstained: ballot.abstainReason, latency_ms: ballot.latencyMs, note: 'An abstention escalates; it never passes.' },
+    risk_consensus: decision.consensus,
     spend_so_far_this_week_sui: sui(spentLast7d(accountId, policy.caps[0].coinType).toString()),
   })
 }

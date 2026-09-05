@@ -50,11 +50,12 @@ interface Pending {
   expires_in_seconds: number
   tx_bytes_b64: string
   state: string
-  risk: 'low' | 'medium' | 'high' | null
-  risk_score: number | null
-  risk_reasons: string[]
-  risk_latency_ms: number | null
-  gonka_request_id: string | null
+  risk_consensus: {
+    consensus: 'low_quorum' | 'review_required'
+    validVotes: number
+    lowVotes: number
+    votes: { model: string; servedModel?: string; fallbackFrom?: string; ok: boolean; requestId: string | null; devshardId: string | null; abstainReason?: string; ballot?: { score: number; risk: 'low' | 'medium' | 'high'; reasons: string[] } }[]
+  } | null
   description: {
     headline: string
     steps: string[]
@@ -74,6 +75,7 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
   const [link, setLink] = useState<Link>('usb')
   const [refundBusy, setRefundBusy] = useState(false)
   const [lastOutcome, setLastOutcome] = useState<string | null>(null)
+  const [approvalPhase, setApprovalPhase] = useState<'idle' | 'ledger' | 'submitting'>('idle')
 
   const say = (s: string) => setLog((l) => [...l, s])
 
@@ -162,6 +164,8 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
   async function signApproval(p: Pending) {
     setBusy(true)
     setLog([])
+    setLastOutcome(null)
+    setApprovalPhase('ledger')
     let transport: Awaited<ReturnType<typeof openTransport>> | null = null
     try {
       // RE-CHECK BEFORE TOUCHING THE DEVICE. This card may have been rendered minutes ago and the
@@ -200,6 +204,7 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
       const { signature: serialized } = await signer.signTransaction(bytes)
       say(`Signed. Partial is ${serialized.length} chars.`)
       say('Submitting the partial signature…')
+      setApprovalPhase('submitting')
 
       const r = await fetch(`/api/approve/${p.id}`, {
         method: 'POST',
@@ -216,16 +221,19 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
       if (!r.ok) throw new Error(body.error ?? `Server returned ${r.status}`)
       say(`EXECUTED. digest ${body.digest}`)
       setLastOutcome(`Approved and executed. ${body.digest ? `Transaction: ${body.digest}` : ''}`)
-      setPending((rows) => rows.filter((row) => row.id !== p.id))
       for (const line of (body.guardrails_updated ?? []) as string[]) say(line)
       say(body.explorer)
     } catch (e) {
-      say(`FAILED: ${explainLedgerError(e)}`)
+      const message = explainLedgerError(e)
+      setLastOutcome(`Approval was not completed. ${message} The transaction is still waiting for review.`)
+      say(`FAILED: ${message}`)
       // The raw message too — this is a test bench, and a friendly string that misdiagnoses the
       // cause is worse than no string at all.
       say(`  raw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`)
     } finally {
       await transport?.close().catch(() => {})
+      await refresh()
+      setApprovalPhase('idle')
       setBusy(false)
     }
   }
@@ -264,7 +272,7 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
     } finally { setRefundBusy(false) }
   }
 
-  if (reviewOnly) return <ApprovalReview busy={busy} device={device} pending={pending} link={link} lastOutcome={lastOutcome} onConnect={checkDevice} onLink={setLink} onRefresh={refresh} onApprove={signApproval} onDecline={decline} optIn={optIn} onTick={tick} />
+  if (reviewOnly) return <ApprovalReview busy={busy} approvalPhase={approvalPhase} device={device} pending={pending} link={link} lastOutcome={lastOutcome} onConnect={checkDevice} onLink={setLink} onRefresh={refresh} onApprove={signApproval} onDecline={decline} optIn={optIn} onTick={tick} />
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12 font-sans">
@@ -417,23 +425,20 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
                 ))}
               </ul>
             </div>
-            {p.risk && (
+            {p.risk_consensus && (
               <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50/60 p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">
-                  Risk score {p.risk_score ?? '—'}/100 · Gonka Router
-                  <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] ${
-                    p.risk === 'high' ? 'bg-red-200 text-red-900'
-                    : p.risk === 'medium' ? 'bg-amber-200 text-amber-900'
-                    : 'bg-green-200 text-green-900'}`}>
-                    {p.risk}
-                  </span>
+                  Gonka consensus · {p.risk_consensus.lowVotes}/{p.risk_consensus.validVotes} low votes
                 </p>
-                <ul className="mt-1 list-disc pl-5 text-sm text-zinc-800">
-                  {p.risk_reasons.map((r, i) => <li key={i}>{r}</li>)}
+                <ul className="mt-2 space-y-2 text-sm text-zinc-800">
+                  {p.risk_consensus.votes.map((vote) => (
+                    <li key={vote.model} className="rounded border border-indigo-100 bg-white/70 p-2">
+                      <b>{vote.model}</b>{vote.fallbackFrom && vote.servedModel ? ` → fallback: ${vote.servedModel}` : ''}{' · '}{vote.ok ? `${vote.ballot!.score}/100 (${vote.ballot!.risk})` : `unavailable (${vote.abstainReason ?? 'unknown'})`}
+                      <span className="block font-mono text-[11px] text-zinc-500">{vote.requestId ?? 'no request id'}{vote.devshardId ? ` · shard ${vote.devshardId}` : ''}</span>
+                      {vote.ok && vote.ballot!.reasons.map((reason, i) => <span className="block text-xs text-zinc-600" key={i}>· {reason}</span>)}
+                    </li>
+                  ))}
                 </ul>
-                <p className="mt-1 font-mono text-[11px] text-zinc-500">
-                  MiniMax-M2.7 · {p.risk_latency_ms}ms · {p.gonka_request_id ?? 'no request id'}
-                </p>
               </div>
             )}
             <p className="mt-2 text-xs text-zinc-500">
@@ -497,14 +502,20 @@ export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean 
 const hex = (b: Uint8Array) => '0x' + Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('')
 const b64ToBytes = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
 
-function ApprovalReview({ busy, device, pending, link, lastOutcome, onConnect, onLink, onRefresh, onApprove, onDecline, optIn, onTick }: {
-  busy: boolean; device: { address: string; version: string } | null; pending: Pending[]; link: Link; lastOutcome: string | null
+function ApprovalReview({ busy, approvalPhase, device, pending, link, lastOutcome, onConnect, onLink, onRefresh, onApprove, onDecline, optIn, onTick }: {
+  busy: boolean; approvalPhase: 'idle' | 'ledger' | 'submitting'; device: { address: string; version: string } | null; pending: Pending[]; link: Link; lastOutcome: string | null
   onConnect: () => void; onLink: (link: Link) => void; onRefresh: () => void; onApprove: (pending: Pending) => void; onDecline: (pending: Pending) => void
   optIn: Record<string, { raise?: boolean; allow?: boolean }>; onTick: (id: string, key: 'raise' | 'allow') => void
 }) {
   const p = pending[0]
   const recipient = p?.description?.headline ?? p?.intent ?? 'Pending recipient'
   const amount = (p?.description?.movements.find((m) => m.direction === 'out')?.amount ?? '—').replace(/^-/, '')
+  const consensus = p?.risk_consensus
+  const tldr = !consensus
+    ? 'No AI receipt is available for this older approval. Your Ledger review is still required.'
+    : consensus.consensus === 'low_quorum'
+      ? `${consensus.lowVotes}/${consensus.validVotes} available AI reviewers assessed the final simulated effects as low risk. The policy rule above still requires your Ledger.`
+      : `The AI reviewers did not reach a low-risk quorum. Review their evidence below before deciding on your Ledger.`
   return <main className="review-page"><section className="review-shell">
     <header className="review-hero"><div><p>PUFFER APPROVAL REVIEW</p><h1>{device ? (p ? 'ONE MOVE NEEDS YOU' : 'ALL CLEAR FOR NOW') : 'CONNECT BEFORE YOU REVIEW'}</h1></div><a className="review-puffer-link" href="/"><Image className="review-puffer" src="/assets/puffer/puffer-review-hands.png" alt="Puffer home" width={470} height={315} priority /></a></header>
     <div className={`review-status ${device ? 'is-connected' : ''}`}><span><i /> {device ? `LEDGER CONNECTED · ${device.address.slice(0, 8)}…${device.address.slice(-5)}` : 'LEDGER NOT CONNECTED'}</span>{device && <button onClick={onRefresh}>REFRESH</button>}</div>
@@ -513,7 +524,12 @@ function ApprovalReview({ busy, device, pending, link, lastOutcome, onConnect, o
       <div className="review-facts"><div><small>AMOUNT</small><strong>{amount}</strong></div><div><small>TO</small><b>{recipient}</b><code>{p.from.slice(0, 7)}…{p.from.slice(-5)}</code></div><div><small>REASON</small><em>{p.rule.replaceAll('_', ' ')}</em></div></div>
       <div className="review-flow"><div><span>FROM (PROTECTED)</span><b>PUFFER GUARDIAN</b><code>{p.from.slice(0, 8)}…{p.from.slice(-5)}</code></div><i>→</i><div><span>TO (RECIPIENT)</span><b>{recipient}</b><code>{p.from.slice(0, 8)}…{p.from.slice(-5)}</code></div></div>
       <div className="review-columns"><article><h2>▣ WHAT YOUR LEDGER WILL SHOW</h2><ul>{(p.description?.deviceWillShow ?? [`Transfer ${amount} from Puffer Guardian`, `To ${recipient}`, 'Network: Sui']).slice(0, 3).map((line, i) => <li key={i}>{line}</li>)}</ul></article><article className="review-why"><h2>! WHY THE AGENT PAUSED</h2><p>{p.description?.flags[0]?.detail ?? p.reasons[0] ?? 'This transaction requires your signature.'}</p><hr /><small>SIMULATION RESULT</small><p className="review-valid">✓ Transaction is valid and would succeed.</p></article></div>
+      <section className="review-ai" aria-label="Gonka AI consensus">
+        <div className="review-ai__head"><div><small>GONKA AI CONSENSUS</small><h2>{consensus ? `${consensus.lowVotes}/${consensus.validVotes} LOW-RISK VOTES` : 'LEGACY APPROVAL'}</h2></div><span className={consensus?.consensus === 'low_quorum' ? 'is-low' : 'is-review'}>{consensus?.consensus === 'low_quorum' ? 'LOW QUORUM' : 'REVIEW REQUIRED'}</span></div>
+        <p className="review-ai__tldr"><b>TL;DR</b> {tldr}</p>
+        {consensus && <div className="review-ai__votes">{consensus.votes.map((vote) => <article key={vote.model} className={vote.ok && vote.ballot?.risk === 'low' ? 'is-low' : 'is-alert'}><header><b>{vote.model}{vote.fallbackFrom && vote.servedModel ? ` → ${vote.servedModel}` : ''}</b><span>{vote.ok ? `${vote.ballot!.score}/100 · ${vote.ballot!.risk}` : `NO VOTE · ${vote.abstainReason ?? 'unavailable'}`}</span></header>{vote.ok && <p>{vote.fallbackFrom ? `Fallback used after ${vote.fallbackFrom} was unavailable. ` : ''}{vote.ballot!.reasons[0] ?? 'No additional explanation returned.'}</p>}<code>{vote.requestId ?? 'No Gonka request ID'}{vote.devshardId ? ` · shard ${vote.devshardId}` : ''}</code></article>)}</div>}
+      </section>
       {!!p.adjustments?.allow_recipient && <label className="review-remember"><input type="checkbox" checked={!!optIn[p.id]?.allow} onChange={() => onTick(p.id, 'allow')} /> Remember this recipient</label>}
-      <div className="review-actions"><button className="review-primary" onClick={() => onApprove(p)} disabled={busy}>{busy ? 'WAITING FOR LEDGER…' : 'APPROVE ON LEDGER →'}</button><button className="review-decline" onClick={() => onDecline(p)} disabled={busy}>DECLINE</button></div>
-    </section>}</section><p className="review-lock"><img src="/assets/puffer/lock-icon.png" alt="" /> Puffer cannot move this address alone.</p></main>
+      <div className="review-actions"><button className="review-primary" onClick={() => onApprove(p)} disabled={busy}>{approvalPhase === 'submitting' ? 'SUBMITTING APPROVAL…' : busy ? 'WAITING FOR LEDGER…' : 'APPROVE ON LEDGER →'}</button><button className="review-decline" onClick={() => onDecline(p)} disabled={busy}>DECLINE</button></div>
+    </section>}</section>{p && <p className="review-lock"><img src="/assets/puffer/lock-icon.png" alt="" /> Puffer cannot move this address alone.</p>}</main>
 }

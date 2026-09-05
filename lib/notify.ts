@@ -28,7 +28,7 @@ export interface Notification {
   intent: string
   rule: string | null
   reasons: string[]
-  riskScore: number | null
+  riskConsensus: string | null
   from: string
   expiresInSeconds: number
 }
@@ -77,7 +77,7 @@ export function notify(accountId: string, n: Notification): void {
     text:
       `Your wallet is holding a payment.\n` +
       `${n.intent}\n` +
-      `Reason: ${n.rule ?? 'flagged'}${n.riskScore !== null ? ` (risk ${n.riskScore}/100)` : ''}\n` +
+      `Reason: ${n.rule ?? 'flagged'}${n.riskConsensus ? ` (${n.riskConsensus})` : ''}\n` +
       `Approve on your Ledger: ${baseUrl()}/test\n` +
       `Or decline from here: ${baseUrl()}/api/decline/${declineToken}\n` +
       `Expires in ${Math.round(n.expiresInSeconds / 60)} minutes.`,
@@ -86,7 +86,7 @@ export function notify(accountId: string, n: Notification): void {
     intent: n.intent,
     rule: n.rule,
     reasons: n.reasons,
-    risk_score: n.riskScore,
+    risk_consensus: n.riskConsensus,
     from: n.from,
     expires_in_seconds: n.expiresInSeconds,
     approve_url: `${baseUrl()}/test`,

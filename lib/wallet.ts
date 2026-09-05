@@ -7,7 +7,7 @@ import { MODES, DEFAULT_MODE, modeTable } from './policy/modes'
 import { notify } from './notify'
 import { simulate } from './evidence'
 import { PolicySchema, evaluate, type Policy } from './policy/policy'
-import { requestBallot } from './ballot'
+import { requestConsensus } from './ballot'
 import { gate, type GateDecision } from './gate'
 import { spentLast7d } from './db'
 
@@ -38,8 +38,6 @@ import { spentLast7d } from './db'
  * A cold call was then measured at 24.4s, so 20s was still too tight. 30s leaves real headroom and
  * still returns inside the MCP client's 60s deadline alongside build, simulate and execute.
  */
-const ADVISORY_BUDGET_MS = 30_000
-const ESCALATION_BUDGET_MS = 30_000
 /**
  * How long a held transaction stays approvable.
  *
@@ -68,7 +66,7 @@ export async function getWallet(accountId: string): Promise<WalletRow & { lastDe
   const w = getDb().prepare('SELECT * FROM wallets WHERE account_id = ?').get(accountId) as WalletRow | undefined
   if (!w) throw new Error('No wallet for this account')
   const last = getDb()
-    .prepare('SELECT id, state, intent, verdict_json, gonka_request_id, digest FROM decisions WHERE account_id = ? ORDER BY created_at DESC LIMIT 1')
+    .prepare('SELECT id, state, intent, verdict_json, ballot_json, gonka_request_id, digest FROM decisions WHERE account_id = ? ORDER BY created_at DESC LIMIT 1')
     .get(accountId)
   return { ...w, lastDecision: last }
 }
@@ -240,8 +238,7 @@ function dryRunResult(
     would: decision.outcome,
     rule: decision.rule,
     reasons: decision.reasons,
-    risk: decision.ballotRisk,
-    risk_score: decision.ballotScore,
+    risk_consensus: decision.consensus,
     ...extra,
     note: 'NOTHING HAPPENED. No transaction was signed, no approval was created, nothing was ' +
       'debited. Call again without dry_run to actually do it.',
@@ -274,18 +271,10 @@ export async function submitTransfer(
   const sim = await simulate(frozen.bytes, w.h_address)
   const verdict = sim.kind === 'ok' ? evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct)) : null
 
-  // Consult the model. Budget and interpretation depend on whether we are already escalating.
-  let ballot = null
-  if (sim.kind === 'ok' && verdict) {
-    const escalating = verdict.verdict !== 'allow'
-    const b = await requestBallot(sim.evidence, w.h_address, args.reason,
-      escalating ? ESCALATION_BUDGET_MS : ADVISORY_BUDGET_MS)
-    // On the clean path an abstention is advisory-only: the deterministic rules already cleared
-    // it, so a busy GPU pool must not turn every payment into a hardware prompt.
-    ballot = b.ok || escalating ? b : null
-  }
-
-  const decision = gate(sim, verdict, ballot)
+  const consensus = sim.kind === 'ok' && verdict?.verdict !== 'deny'
+    ? await requestConsensus(sim.evidence, w.h_address, args.reason)
+    : null
+  const decision = gate(sim, verdict, consensus)
 
   // Bail BEFORE record(): a rehearsal that leaves a decision row behind is not a rehearsal.
   if (args.dry_run) return dryRunResult(decision, sim, { from: w.h_address, digest_if_sent: frozen.digest })
@@ -328,22 +317,31 @@ export async function submitTransfer(
     const verdict2 = sim2.kind === 'ok'
       ? evaluate({ ...policy, walletAddress: w.m_address }, sim2.evidence, (ct) => spentLast7d(accountId, ct))
       : null
-    const decision2 = gate(sim2, verdict2, ballot)
-
-    const id = record(accountId, escalated, decision2, sim2, intent, w, 'pending')
+    const consensus2 = sim2.kind === 'ok' && verdict2?.verdict !== 'deny'
+      ? await requestConsensus(sim2.evidence, w.m_address, args.reason)
+      : null
+    const decision2 = gate(sim2, verdict2, consensus2)
+    if (decision2.outcome === 'blocked') {
+      record(accountId, escalated, decision2, sim2, intent, w, 'blocked')
+      return { outcome: 'blocked', funds_moved: false, rule: decision2.rule, reasons: decision2.reasons,
+        risk_consensus: decision2.consensus, note: 'Nothing was sent. The protected transaction could not pass its final safety check.' }
+    }
+    const approvalDecision: GateDecision = decision2.outcome === 'needs_ledger'
+      ? decision2
+      : { ...decision2, outcome: 'needs_ledger', rule: decision.rule, reasons: decision.reasons }
+    const id = record(accountId, escalated, approvalDecision, sim2, intent, w, 'pending')
     // Not awaited: a slow webhook must not add its latency to a payment the agent is waiting on,
     // and a delivery failure must never fail an escalation that is already safely recorded.
     notify(accountId, {
       decisionId: id, intent, rule: decision.rule, reasons: decision.reasons,
-      riskScore: decision2.ballotScore ?? null, from: w.m_address,
+      riskConsensus: approvalDecision.consensus?.consensus ?? null, from: w.m_address,
       expiresInSeconds: APPROVAL_TTL_MS / 1000,
     })
     return {
       outcome: 'awaiting_approval', funds_moved: false, approval_id: id, rule: decision.rule,
       approval_url: approvalUrl(id),
       reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
-      risk: decision2.ballotRisk, risk_score: decision2.ballotScore, risk_reasons: decision2.ballotReasons,
-      gonka_request_id: decision2.gonkaRequestId,
+      risk_consensus: approvalDecision.consensus,
       from: w.m_address,
       note: 'NOTHING HAS BEEN SENT. This was re-issued from the protected address, which needs the owner\'s Ledger as a second signature — our key alone cannot move it. Poll wallet_approval_status. Do not retry: a retry creates a second pending approval, it does not bypass this one.',
     }
@@ -371,8 +369,7 @@ export async function submitTransfer(
   getDb().prepare('UPDATE decisions SET digest=? WHERE id=?').run(exec.digest, id)
   return {
     outcome: 'executed', funds_moved: true, digest: exec.digest, rule: decision.rule,
-    risk: decision.ballotRisk, risk_score: decision.ballotScore, risk_reasons: decision.ballotReasons,
-    risk_latency_ms: decision.ballotLatencyMs, gonka_request_id: decision.gonkaRequestId,
+    risk_consensus: decision.consensus,
     explorer: `https://suiscan.xyz/testnet/tx/${exec.digest}`,
     note: "Signed and submitted within the owner's limits.",
   }
@@ -388,7 +385,7 @@ export async function requestProtectedRefund(accountId: string, to: string): Pro
   try { frozen = await buildTransferAll(w.m_address, to) }
   catch (e) { return { outcome: 'blocked', funds_moved: false, rule: 'BUILD_FAILED', reasons: [e instanceof Error ? e.message : String(e)] } }
   const sim = await simulate(frozen.bytes, w.m_address)
-  const d = { verdict: 'needs_ledger', rule: 'PROTECTED_RECOVERY', reasons: ['Recovery of protected funds requires your Ledger.'], ballotRisk: 'low', ballotScore: 0, ballotReasons: [], gonkaRequestId: null } as unknown as GateDecision
+  const d: GateDecision = { outcome: 'needs_ledger', rule: 'PROTECTED_RECOVERY', reasons: ['Recovery of protected funds requires your Ledger.'], consensus: null, gonkaRequestId: null }
   const id = record(accountId, frozen, d, sim, `recover protected SUI to ${to}`, w, 'pending')
   return { outcome: 'awaiting_approval', funds_moved: false, approval_id: id, from: w.m_address, amount_sui: fmtSui(amount), note: 'Nothing was sent. Approve this recovery on your Ledger.' }
 }
@@ -419,11 +416,11 @@ function record(
     gasPaidBySponsor: frozen.gasPaidBySponsor,
   }
   getDb().prepare(
-    `INSERT INTO decisions(id,account_id,state,intent,evidence_json,verdict_json,gonka_request_id,
+    `INSERT INTO decisions(id,account_id,state,intent,evidence_json,verdict_json,ballot_json,gonka_request_id,
        tx_bytes_b64,bytes_sha256,sender,policy_version,digest,created_at,expires_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
-    id, accountId, state, intent, JSON.stringify(stored), JSON.stringify(d), d.gonkaRequestId,
+    id, accountId, state, intent, JSON.stringify(stored), JSON.stringify(d), JSON.stringify(d.consensus), d.gonkaRequestId,
     Buffer.from(frozen.bytes).toString('base64'), frozen.sha256, frozen.sender,
     w.policy_version, state === 'executed' ? frozen.digest : null, Date.now(), Date.now() + APPROVAL_TTL_MS
   )
@@ -507,18 +504,10 @@ export async function submitSwap(
 
   const sim = await simulate(frozen.bytes, w.h_address)
   const verdict = sim.kind === 'ok' ? evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct)) : null
-  // Identical treatment to submitTransfer, and it must stay identical: a trade and a payment
-  // should not answer to different rules about a busy model. This was asymmetric — swaps always
-  // passed the ballot, so a single slow Gonka call turned every clean trade into a hardware
-  // prompt, which is how a demo ends up escalating the transaction it was meant to breeze through.
-  let ballot = null
-  if (sim.kind === 'ok' && verdict) {
-    const escalating = verdict.verdict !== 'allow'
-    const b = await requestBallot(sim.evidence, w.h_address, args.reason,
-      escalating ? ESCALATION_BUDGET_MS : ADVISORY_BUDGET_MS)
-    ballot = b.ok || escalating ? b : null
-  }
-  const decision = gate(sim, verdict, ballot)
+  const consensus = sim.kind === 'ok' && verdict?.verdict !== 'deny'
+    ? await requestConsensus(sim.evidence, w.h_address, args.reason)
+    : null
+  const decision = gate(sim, verdict, consensus)
 
   if (args.dry_run) {
     return dryRunResult(decision, sim, {
@@ -532,7 +521,7 @@ export async function submitSwap(
     return {
       outcome: 'blocked', funds_moved: false, rule: decision.rule, reasons: decision.reasons,
       quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
-      risk: decision.ballotRisk, risk_score: decision.ballotScore,
+      risk_consensus: decision.consensus,
       note: 'Nothing was swapped.',
     }
   }
@@ -567,12 +556,22 @@ export async function submitSwap(
     const verdict2 = sim2.kind === 'ok'
       ? evaluate({ ...policy, walletAddress: w.m_address }, sim2.evidence, (ct) => spentLast7d(accountId, ct))
       : null
-    const decision2 = gate(sim2, verdict2, ballot)
-
-    const id = record(accountId, escalated, decision2, sim2, intent, w, 'pending')
+    const consensus2 = sim2.kind === 'ok' && verdict2?.verdict !== 'deny'
+      ? await requestConsensus(sim2.evidence, w.m_address, args.reason)
+      : null
+    const decision2 = gate(sim2, verdict2, consensus2)
+    if (decision2.outcome === 'blocked') {
+      record(accountId, escalated, decision2, sim2, intent, w, 'blocked')
+      return { outcome: 'blocked', funds_moved: false, rule: decision2.rule, reasons: decision2.reasons,
+        risk_consensus: decision2.consensus, note: 'Nothing was swapped. The protected transaction could not pass its final safety check.' }
+    }
+    const approvalDecision: GateDecision = decision2.outcome === 'needs_ledger'
+      ? decision2
+      : { ...decision2, outcome: 'needs_ledger', rule: decision.rule, reasons: decision.reasons }
+    const id = record(accountId, escalated, approvalDecision, sim2, intent, w, 'pending')
     notify(accountId, {
       decisionId: id, intent, rule: decision.rule, reasons: decision.reasons,
-      riskScore: decision2.ballotScore ?? null, from: w.m_address,
+      riskConsensus: approvalDecision.consensus?.consensus ?? null, from: w.m_address,
       expiresInSeconds: APPROVAL_TTL_MS / 1000,
     })
     return {
@@ -580,7 +579,7 @@ export async function submitSwap(
       approval_url: approvalUrl(id),
       rule: decision.rule, reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
       quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
-      risk: decision2.ballotRisk, risk_score: decision2.ballotScore,
+      risk_consensus: approvalDecision.consensus,
       from: w.m_address,
       note: 'NOTHING WAS SWAPPED. This was re-issued from the protected address, which needs the owner\'s Ledger as a second signature. Poll wallet_approval_status.',
     }
@@ -595,8 +594,7 @@ export async function submitSwap(
       outcome: 'executed', funds_moved: true, digest: exec.digest,
       explorer: `https://suiscan.xyz/testnet/tx/${exec.digest}`,
       quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
-      risk: decision.ballotRisk, risk_score: decision.ballotScore,
-      gonka_request_id: decision.gonkaRequestId,
+      risk_consensus: decision.consensus,
     }
   } catch (e) {
     return { outcome: 'blocked', funds_moved: false, rule: 'EXECUTION_FAILED',
@@ -665,18 +663,15 @@ export function listHistory(accountId: string, limit = 20): Record<string, unkno
     count: rows.length,
     decisions: rows.map((r) => {
       let rule: string | null = null
-      let score: number | null = null
       try {
-        const v = JSON.parse(r.verdict_json) as { rule?: string; ballotScore?: number }
+        const v = JSON.parse(r.verdict_json) as { rule?: string }
         rule = v.rule ?? null
-        score = typeof v.ballotScore === 'number' ? v.ballotScore : null
       } catch { /* a decision row with unreadable verdict json is still worth listing */ }
       return {
         id: r.id,
         state: r.state,
         why_the_agent_said_it: r.intent,
         rule,
-        risk_score: score,
         from: r.sender,
         ...(r.digest ? { digest: r.digest, explorer: `https://suiscan.xyz/testnet/tx/${r.digest}` } : {}),
         at: new Date(r.created_at).toISOString(),

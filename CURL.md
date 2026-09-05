@@ -135,7 +135,7 @@ curl -sX POST $BASE/api/check \
 ```
 
 You get back `would` (`allow` | `needs_ledger` | `blocked`), the `rule` that decided it, the
-simulated `balance_changes` with each party named, the Gonka `risk` block, and
+simulated `balance_changes` with each party named, the Gonka `risk_consensus` block, and
 `spend_so_far_this_week_sui`. `"all"` is transfer-only — a swap needs a concrete size.
 
 Small swaps return nothing: the book fills only above a floor set by the resting orders (recently
@@ -147,9 +147,11 @@ Small swaps return nothing: the book fills only above a floor set by the resting
 
 ## 3 · The risk model
 
-Gonka scores the *simulated* bundle, never the agent's words about it, and it can only escalate —
-the deterministic rules are a floor it cannot argue under. An abstention (timeout, HTTP error,
-substituted model, unparseable reply) escalates too. **It never passes anything on its own.**
+Gonka verifiers score the *simulated* bundle, never the agent's words about it, and can only
+escalate — deterministic rules are a floor they cannot argue under. Puffer sends two concurrent
+requests to MiniMax-M2.7 and one to DeepSeek-V4-Flash, and requires low-risk responses from both
+distinct models to allow a routine payment. Any higher vote, disagreement, or fewer than two
+distinct valid votes requires the Ledger.
 
 **Health probe / warmer.** Scores one of two fixed sample bundles. There is no way to send it your
 own prompt — that is the whole design; the old open-proxy route was deleted.
@@ -159,18 +161,17 @@ curl -s $BASE/api/risk -H "Authorization: Bearer $BEARER"              # benign 
 curl -s "$BASE/api/risk?case=drain" -H "Authorization: Bearer $BEARER" # drain   → expects high
 ```
 
-`as_expected: false` means the model has drifted. `reachable: false` means it is down and every
-transaction will escalate to the Ledger until it returns. Run the benign one at session start:
+`as_expected: false` means the health-probe model has drifted. Run the benign one at session start:
 the first call is the slow one, and a cold model answering in 31s against a 30s budget abstains,
 escalating a payment that was never risky.
 
 Live, just now — `benign` 10/low in 3.5s, `drain` 85/high in 15.5s, and it named the social
 engineering: *"The 'claim free airdrop' text is a social engineering trick with no actual reward."*
 
-**Scores on real transactions** come back inside `/api/check` (`risk.score`, `risk.band`,
-`risk.reasons`, `risk.gonka_request_id`) and after the fact from `wallet_explain_last`. Bands are
-ours and published: `<34` low, `<67` medium, else high — read the score, apply two numbers, get the
-same answer the gate did.
+**Consensus receipts on real transactions** come back inside `/api/check` as
+`risk_consensus.votes`. Each winning vote includes its score, band, reasons, `requestId`, and
+`devshardId`; there is intentionally no combined score. `X-Request-Id` can be looked up through
+Gonka's receipt endpoint to confirm the gateway served that inference.
 
 ---
 

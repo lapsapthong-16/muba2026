@@ -69,16 +69,16 @@ first match winning:
 | Simulation failed or unreachable | **blocked** |
 | `WEEKLY_CAP` | **blocked** — hardware cannot create budget |
 | `PER_TX_LIMIT`, `UNKNOWN_RECIPIENT`, `UNKNOWN_PACKAGE`, `CAPABILITY_TRANSFER` | **needs your Ledger** |
-| Gonka risk score medium or high | **needs your Ledger** |
-| Gonka is unavailable for a transaction already flagged by a deterministic rule | **needs your Ledger** |
+| Any Gonka verifier says medium or high, or verifiers disagree | **needs your Ledger** |
+| Fewer than two valid Gonka verifier responses | **needs your Ledger** |
 | otherwise | **allowed** |
 
-Deterministic rules are a floor. The risk model — one model, **MiniMax-M2.7 via Gonka** — can only
-escalate above them, never clear a rule that fired. There are not two competing risk scores: Sui
-simulation supplies verifiable facts about the proposed transaction, while Gonka supplies one
-model assessment of the risk in those facts. Bands are ours and published: under 34 low, under 67
-medium, else high. Read the model score, apply those two thresholds, and get the same band Puffer
-uses.
+Deterministic rules are a floor. The three currently configured risk reviews — **two MiniMax-M2.7
+requests and one DeepSeek-V4-Flash request via Gonka** — can only escalate above them, never clear a rule that fired.
+Sui simulation supplies verifiable facts about the proposed transaction; each model supplies its
+own assessment of those facts. Bands are ours and published: under 34 low, under 67 medium, else
+high. Puffer allows a routine payment only when at least two valid model responses are low risk;
+any higher vote or disagreement requires the Ledger.
 
 The model receives the **simulated evidence bundle**, not raw transaction bytes and not a claim
 from the agent that a payment is safe. Its input contains balance changes, gas use, Move packages,
@@ -87,13 +87,13 @@ untrusted text. On a real drain MiniMax returned 85/100 and named the manipulati
 
 > The "claim free airdrop" text is a social engineering trick with no actual reward.
 
-Gonka availability is not allowed to weaken an existing rule. If a transaction is already flagged
-by policy, a timeout, malformed answer, or substituted model still sends it to the Ledger. For a
-transaction that clears every deterministic rule, Puffer treats a Gonka non-response as advisory
-and can proceed on the deterministic clear; this avoids making every routine payment wait for a
-shared GPU pool. That is an availability trade-off, not a second source of permission. The gate
-never lets Gonka override a cap, unfamiliar-recipient rule, package rule, simulation failure, or
-capability-transfer block.
+Puffer sends two MiniMax requests and one DeepSeek request as a connectivity hedge. Every request
+disables Gonka fallback; a substituted, malformed, or timed-out response is not a vote. Duplicate
+MiniMax responses never count as two independent votes, so a two-model low-risk quorum still
+requires both MiniMax and DeepSeek. The receipt shown for each winner includes its `X-Request-Id` and
+`X-Devshard-ID`; request IDs can verify Gonka served a call, but do not prove the prompt or response
+content until signed receipts are available. The gate never lets a model override a cap,
+unfamiliar-recipient rule, package rule, simulation failure, or capability-transfer block.
 
 `CAPABILITY_TRANSFER` is there because balance changes cannot see it: handing over an admin
 capability yields a `balanceChanges` array whose only row is gas, so every cap, limit and recipient
@@ -187,9 +187,22 @@ npx tsx --test lib/*.test.ts
 Gas is sponsored by Shinami, so the wallet pays no fees — but the trade principal is always the
 agent's own balance. Pages: `/setup`, `/guardrails`, `/test` (the Ledger bench).
 
-**Stack.** Next.js 16 · `@mysten/sui` 2.29 (`SuiGrpcClient`; `SuiClient` was removed in 2.0) ·
-`@mysten/deepbook-v3` · `@mysten/ledger-signer` over WebHID · `@modelcontextprotocol/sdk` over
-Streamable HTTP · Shinami Gas Station · Gonka Router · `node:sqlite` · zod.
+## Tech stack used
+
+### Sui
+
+- **Sui gRPC + Programmable Transaction Blocks (PTBs)** — builds and simulates every transaction before it can be signed.
+- **Shinami Gas Station** — sponsors gas, so users do not pay transaction fees.
+- **DeepBook v3** — provides live market data and executes SUI/DBUSDC trades; Sui gRPC performs the transaction simulation.
+- **Ledger + WebHID** — hardware-key signing for protected transactions.
+- **Sui native multisig** — 1-of-2 spending and 2-of-2 protected wallets.
+
+### App and AI
+
+- **Next.js 16 + React 19** — web application.
+- **Gonka AI Router** — routes the independent MiniMax and DeepSeek transaction-risk reviews.
+- **MCP Streamable HTTP** — exposes the agent wallet tools.
+- **`node:sqlite` + Zod** — local persistence and runtime validation.
 
 ---
 

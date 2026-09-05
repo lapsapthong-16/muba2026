@@ -11,7 +11,7 @@
     "pipeline": "tsx --env-file=.env scripts/pipeline.mts",
     "test:policy": "tsx lib/policy/policy.test.ts",
     "test:gate": "tsx lib/gate.test.ts",
-    "test": "npm run test:gate && npm run test:policy",
+    "test": "npm run test:gate && npx tsx lib/ballot.test.ts && npm run test:policy",
     "fund": "tsx --env-file=.env scripts/fund.mts",
     "onboard": "tsx --env-file=.env scripts/onboard.mts",
     "demo": "tsx --env-file=.env scripts/demo.mts",

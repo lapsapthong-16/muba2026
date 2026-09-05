@@ -41,7 +41,7 @@ const wallets = db
   .all() as { account_id: string; h_address: string; m_address: string | null }[]
 
 const counts = Object.fromEntries(
-  ['accounts', 'wallets', 'decisions', 'spend_ledger'].map((t) => [
+  ['accounts', 'wallets', 'decisions', 'spend_ledger', 'gonka_calls'].map((t) => [
     t,
     (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n,
   ])
@@ -51,7 +51,8 @@ console.log(`${dry ? 'WOULD CLEAR' : 'CLEARING'} — ${NETWORK}\n`)
 console.log(`  accounts      ${counts.accounts}`)
 console.log(`  wallets       ${counts.wallets}`)
 console.log(`  decisions     ${counts.decisions}   (approvals, history, and the reasons the agent gave)`)
-console.log(`  spend_ledger  ${counts.spend_ledger}   (the weekly-cap counter)`)
+  console.log(`  spend_ledger  ${counts.spend_ledger}   (the weekly-cap counter)`)
+console.log(`  gonka_calls   ${counts.gonka_calls}   (inference receipt metadata)`)
 
 // Spell the stranded SUI out. A reset that silently abandons funds teaches you to distrust it.
 let stranded = 0n
@@ -94,7 +95,7 @@ for (const w of wallets) {
  * `PRAGMA foreign_keys = ON` is set at connection time — so deleting accounts first would throw
  * on the constraint rather than cascade.
  */
-for (const t of ['decisions', 'spend_ledger', 'wallets', 'accounts']) {
+for (const t of ['decisions', 'spend_ledger', 'gonka_calls', 'wallets', 'accounts']) {
   db.prepare(`DELETE FROM ${t}`).run()
 }
 for (const f of files) rmSync(f, { recursive: true, force: true })

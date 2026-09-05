@@ -12,7 +12,7 @@ import { assertChain, NETWORK, SUI_DECIMALS, getBalance } from '../lib/sui'
 import { buildTransfer, buildTransferAll, type FrozenTx } from '../lib/tx'
 import { simulate } from '../lib/evidence'
 import { PolicySchema, evaluate } from '../lib/policy/policy'
-import { requestBallot, RISK_BANDS } from '../lib/ballot'
+import { requestConsensus, RISK_BANDS } from '../lib/ballot'
 import { gate } from '../lib/gate'
 import { spentLast7d } from '../lib/db'
 
@@ -75,19 +75,15 @@ for (const c of cases) {
   }
 
   const t0 = Date.now()
-  const ballot = await requestBallot(ev, ME, c.reason, 30_000)
+  const consensus = await requestConsensus(ev, ME, c.reason)
   console.log(`  ④ GONKA      ${Date.now() - t0}ms`)
-  if (ballot.ok) {
-    console.log(`       score ${ballot.ballot.score}/100 -> ${ballot.ballot.risk.toUpperCase()}`)
-    console.log(`       request id ${ballot.requestId}`)
-    for (const r of ballot.ballot.reasons) console.log(`       · ${r}`)
-    if (ballot.ballot.signals.length) console.log(`       signals: ${ballot.ballot.signals.join(', ')}`)
-  } else {
-    console.log(`       ABSTAINED (${ballot.abstainReason}) — an abstention escalates, it never passes`)
+  for (const vote of consensus.votes) {
+    if (vote.ok) console.log(`       ${vote.model}: ${vote.ballot!.score}/100 ${vote.ballot!.risk} · ${vote.requestId}`)
+    else console.log(`       ${vote.model}: unavailable (${vote.abstainReason})`)
   }
 
   const verdict = evaluate(policy, ev, (ct) => spentLast7d(acct!.id, ct))
-  const d = gate(sim, verdict, ballot)
+  const d = gate(sim, verdict, consensus)
   console.log(`  ⑤ GATE       ${d.outcome.toUpperCase()}  [${d.rule}]`)
   for (const r of d.reasons) console.log(`       · ${r}`)
 }

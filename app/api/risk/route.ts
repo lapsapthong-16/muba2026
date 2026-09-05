@@ -109,6 +109,7 @@ export async function GET(req: Request) {
     signals: ballot.ballot.signals,
     model: ballot.model,
     gonka_request_id: ballot.requestId,
+    gonka_devshard_id: ballot.devshardId,
     latency_ms: ballot.latencyMs,
     note: 'Nothing was built, simulated or sent. This scores a fixed sample bundle.',
   })

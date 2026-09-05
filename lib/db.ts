@@ -70,6 +70,20 @@ function migrate(d: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS decisions_pending ON decisions(account_id, state, expires_at);
 
+    CREATE TABLE IF NOT EXISTS gonka_calls (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      model          TEXT NOT NULL,
+      model_served   TEXT,
+      request_id     TEXT,
+      devshard_id    TEXT,
+      outcome        TEXT NOT NULL,
+      status_code    INTEGER,
+      latency_ms     INTEGER NOT NULL,
+      total_tokens   INTEGER,
+      created_at     INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS gonka_calls_created ON gonka_calls(created_at DESC);
+
     -- Debited at SIGN time, not request time. settle() rewrites amount from executed effects.
     CREATE TABLE IF NOT EXISTS spend_ledger (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
