@@ -1,6 +1,6 @@
-# Puffer
+<img width="2048" height="768" alt="puffer-logo-hd" src="https://github.com/user-attachments/assets/ddb192fb-2e61-41ac-bf28-105a29a69163" />
 
-**An agent wallet on Sui that is a 1-of-2 most of the time, and a 2-of-2 when it needs to be.**
+**Puffer is an agent wallet on Sui that is a 1-of-2 most of the time, and a 2-of-2 when it needs to be.**
 
 A pufferfish is unremarkable until something threatens it. Your agent spends freely inside limits
 you set; when a transaction falls outside them, it is rebuilt from an address our key cannot move
