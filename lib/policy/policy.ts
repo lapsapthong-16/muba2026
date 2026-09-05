@@ -229,5 +229,6 @@ export function evaluate(policy: Policy, ev: Evidence, spent: SpentLast7d): Verd
   }
 
   const verdict = reasons.some((r) => r.verdict === 'deny') ? 'deny' : reasons.length ? 'require_approval' : 'allow'
+  // Denials stop here; every transaction that can reach a Ledger or execution gets advisory AI.
   return { verdict, reasons, outflows, recipients, gasMist: netGas.toString(), consultGonka: verdict !== 'deny' }
 }

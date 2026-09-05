@@ -6,7 +6,7 @@ import { getWallet, walletStatus, submitTransfer, submitSwap, approvalStatus, li
 import { withCode } from '@/lib/errors'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const maxDuration = 180
 
 /**
  * MCP over Streamable HTTP. The WebStandard transport's handleRequest(Request) -> Response IS the

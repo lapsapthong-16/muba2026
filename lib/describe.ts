@@ -158,6 +158,7 @@ export function describe(
   // actually does is the effects, not its shape.
   const movements: Description['movements'] = []
   let outTotal = 0n
+  let payeeTotal = 0n
   let payee: string | null = null
   for (const b of ev.balanceChanges) {
     const amt = BigInt(b.amount)
@@ -166,14 +167,19 @@ export function describe(
       movements.push({ label: 'from your wallet', amount: fmt(amt), direction: amt < 0n ? 'out' : 'in' })
     } else if (amt > 0n && b.address !== ev.gasOwner) {
       payee = b.address
+      payeeTotal += amt
       movements.push({ label: `to ${short(b.address)}`, amount: fmt(amt), direction: 'in' })
     }
   }
 
-  const spend = ev.gasPaidBySender === false ? outTotal : outTotal - netGas(ev)
+  const calculatedSpend = ev.gasPaidBySender === false ? outTotal : outTotal - netGas(ev)
+  // For `send all`, tx.coin() may expose only gas on the sender's row. The recipient's
+  // positive balance change is the exact principal that will be transferred.
+  const exactSpend = calculatedSpend > 0n ? calculatedSpend : payeeTotal
+  const spend = exactSpend > 0n ? fmt(exactSpend) : '0 SUI'
   const headline = payee
-    ? `Send ${fmt(spend)} from your wallet to ${short(payee)}.`
-    : `Move ${fmt(spend)} out of your wallet.`
+    ? `Send ${spend} from your wallet to ${short(payee)}.`
+    : `Move ${spend} out of your wallet.`
 
   // Only claim the device shows a field if the transaction is a shape its parser recognises.
   const hasMoveCall = commands.some((c) => ((c.$kind as string) ?? Object.keys(c)[0]) === 'MoveCall')

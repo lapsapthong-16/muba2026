@@ -9,7 +9,7 @@ import { gate } from '@/lib/gate'
 import { SUI_DECIMALS } from '@/lib/sui'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const maxDuration = 90
 
 /**
  * Dry run: build, simulate, score and gate a transaction WITHOUT signing it, broadcasting it, or
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
   }
 
   const verdict = evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct))
-  const consensus = verdict.verdict !== 'deny'
+  const consensus = verdict.consultGonka
     ? await requestConsensus(sim.evidence, w.h_address, body!.reason ?? '')
     : null
   const decision = gate(sim, verdict, consensus)

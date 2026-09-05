@@ -5,6 +5,12 @@ import Image from 'next/image'
 import './guardrails-overrides.css'
 
 interface Recipient { address: string; label: string }
+interface WalletBalances {
+  spending_balance_sui: string
+  protected_balance_sui: string
+  spending_address: string | null
+  protected_address: string | null
+}
 
 export default function Guardrails() {
   const [perTx, setPerTx] = useState(1)
@@ -14,6 +20,10 @@ export default function Guardrails() {
   const [saved, setSaved] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
+  const [balances, setBalances] = useState<WalletBalances>({
+    spending_balance_sui: '0.0000', protected_balance_sui: '0.0000',
+    spending_address: null, protected_address: null,
+  })
 
   useEffect(() => {
     ;(async () => {
@@ -21,6 +31,12 @@ export default function Guardrails() {
       if (!r.ok) return setError('Open your setup link first.')
       const s = await r.json()
       setReady(!!s.ledger_address)
+      setBalances({
+        spending_balance_sui: s.spending_balance_sui ?? '0.0000',
+        protected_balance_sui: s.protected_balance_sui ?? '0.0000',
+        spending_address: s.spending_address ?? null,
+        protected_address: s.protected_address ?? null,
+      })
       if (s.policy) {
         const cap = s.policy.caps[0]
         setPerTx(Number(cap.perTxLimit) / 1e9)
@@ -49,6 +65,19 @@ export default function Guardrails() {
     <main className="guardrails-page"><div className="guardrails-shell">
       <header className="guardrails-hero"><div><p>PUFFER / CONTROL ROOM</p><h1>SET THE<br />BOUNDARIES</h1><span>Define spending limits and approve recipients so Puffer can operate within your rules.</span></div><Image src="/assets/puffer/puffer-alert-large.png" alt="" width={300} height={220} priority /></header>
       <div className="guardrails-status"><span><i /> POLICY CONFIGURATION</span><b>LEDGER REQUIRED</b></div>
+
+      <section className="guardrails-wallet-balances" aria-label="Wallet allocation">
+        <div className="guardrails-wallet-balance guardrails-wallet-balance--spending">
+          <span>SPENDING WALLET · 1-OF-2</span>
+          <strong>{balances.spending_balance_sui} SUI</strong>
+          <small>{balances.spending_address ? `${balances.spending_address.slice(0, 8)}…${balances.spending_address.slice(-6)}` : 'Waiting for Ledger setup'}</small>
+        </div>
+        <div className="guardrails-wallet-balance guardrails-wallet-balance--protected">
+          <span>PROTECTED WALLET · 2-OF-2</span>
+          <strong>{balances.protected_balance_sui} SUI</strong>
+          <small>{balances.protected_address ? `${balances.protected_address.slice(0, 8)}…${balances.protected_address.slice(-6)}` : 'Waiting for Ledger setup'}</small>
+        </div>
+      </section>
 
       <fieldset className="guardrails-form" disabled={!ready}>
         <section className="guardrails-panel"><h2><b>01</b><span>SPENDING LIMITS<small>Set how much Puffer can spend per transaction and per week.</small></span></h2><div className="guardrails-limits"><div><label>Single payment limit</label><p>Maximum allowed per transaction</p><div className="guardrails-limit-field">

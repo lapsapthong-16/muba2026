@@ -1,7 +1,5 @@
 # Puffer
 
-TODO: Add a dashboard field for configuring `notifyUrl`, so users can connect approval alerts to a Slack, Discord, ntfy, or custom webhook without calling the API manually.
-
 **An agent wallet on Sui that is a 1-of-2 most of the time, and a 2-of-2 when it needs to be.**
 
 A pufferfish is unremarkable until something threatens it. Your agent spends freely inside limits
@@ -73,27 +71,56 @@ first match winning:
 | Fewer than two valid Gonka verifier responses | **needs your Ledger** |
 | otherwise | **allowed** |
 
-Deterministic rules are a floor. The three currently configured risk reviews — **two MiniMax-M2.7
-requests and one DeepSeek-V4-Flash request via Gonka** — can only escalate above them, never clear a rule that fired.
-Sui simulation supplies verifiable facts about the proposed transaction; each model supplies its
-own assessment of those facts. Bands are ours and published: under 34 low, under 67 medium, else
-high. Puffer allows a routine payment only when at least two valid model responses are low risk;
-any higher vote or disagreement requires the Ledger.
+Deterministic rules are the floor. The three configured risk reviews — **two MiniMax-M2.7 requests
+and one DeepSeek-V4-Flash request via Gonka** — can only escalate above that floor; they never
+clear a rule that fired. Scores below 34 are low, 34–66 are medium, and 67+ are high. A payment is
+allowed only when two independently served models return low risk; a higher vote, disagreement, or
+missing vote requires the Ledger.
 
-The model receives the **simulated evidence bundle**, not raw transaction bytes and not a claim
-from the agent that a payment is safe. Its input contains balance changes, gas use, Move packages,
-object transfers, and simulation status. The agent's stated reason is explicitly marked as
-untrusted text. On a real drain MiniMax returned 85/100 and named the manipulation unprompted:
+### What Gonka receives
+
+Gonka receives simulated transaction effects, not raw transaction bytes, private keys, or a claim
+from the agent that a payment is safe. The evidence bundle has this shape:
+
+```json
+{
+  "wallet": "0x…",
+  "balance_changes": [{
+    "coin_type": "…::sui::SUI",
+    "address": "0x…",
+    "amount": "-2 SUI",
+    "amount_base_units": "-2000000000",
+    "is_wallet": true
+  }],
+  "gas_used": "…",
+  "move_packages": ["0x…"],
+  "object_transfers": [{
+    "object_type": "…",
+    "to": "0x…",
+    "is_capability": false
+  }],
+  "simulation_ok": true
+}
+```
+
+Each reviewer is asked to return a numeric score, 3–5 specific findings, and machine-readable signals. It
+looks for value leaving without value returning, unusual recipients, invoked Move packages,
+objects or authority capabilities leaving the wallet, gas anomalies, and simulation failures. The
+agent's stated reason is included only as explicitly marked **untrusted** text. Hashes remain a
+local integrity mechanism: Puffer uses them to verify that the bytes it simulated are the bytes it
+signs, not as AI input.
+
+On a real drain MiniMax returned 85/100 and named the manipulation unprompted:
 
 > The "claim free airdrop" text is a social engineering trick with no actual reward.
 
 Puffer sends two MiniMax requests and one DeepSeek request as a connectivity hedge. Every request
 disables Gonka fallback; a substituted, malformed, or timed-out response is not a vote. Duplicate
-MiniMax responses never count as two independent votes, so a two-model low-risk quorum still
-requires both MiniMax and DeepSeek. The receipt shown for each winner includes its `X-Request-Id` and
-`X-Devshard-ID`; request IDs can verify Gonka served a call, but do not prove the prompt or response
-content until signed receipts are available. The gate never lets a model override a cap,
-unfamiliar-recipient rule, package rule, simulation failure, or capability-transfer block.
+MiniMax responses never count as an independent quorum, so a two-model low-risk quorum still
+requires both MiniMax and DeepSeek. Each winning response records its `X-Request-Id` and
+`X-Devshard-ID`; request IDs prove Gonka served a call, but not the prompt or response content until
+signed receipts are available. The gate never lets a model override a cap, an unfamiliar-recipient
+rule, a package rule, a simulation failure, or a capability-transfer block.
 
 `CAPABILITY_TRANSFER` is there because balance changes cannot see it: handing over an admin
 capability yields a `balanceChanges` array whose only row is gas, so every cap, limit and recipient
@@ -181,11 +208,12 @@ npm install
 ONBOARD_PASS=demo npm run dev          # http://localhost:3000
 npm run fund -- 0x<address> 2.5        # testnet's HTTP faucet is IP-blocked; this is the way
 bash scripts/flow.sh                   # the whole flow, printing every curl before it runs
-npx tsx --test lib/*.test.ts
+npm run test
 ```
 
 Gas is sponsored by Shinami, so the wallet pays no fees — but the trade principal is always the
-agent's own balance. Pages: `/setup`, `/guardrails`, `/test` (the Ledger bench).
+agent's own balance. Pages: `/setup`, `/guardrails`, `/test` (the Ledger bench), and `/logs`
+(Gonka inference metadata and receipts).
 
 ## Tech stack used
 
@@ -222,8 +250,9 @@ A security product that lists only its strengths is telling you half of somethin
 
 ## Known gaps
 
-- One test file. `lib/gate.test.ts` pins the gate's ordering; modes, adjustments, error codes and
-  notifications are verified by live runs, not by tests.
+- Approval webhooks require setting `notifyUrl` through the API; the dashboard has no field for it yet.
+- Tests cover gate ordering, model-quorum handling, and policy parsing; modes, adjustments, error
+  codes, and notifications are verified by live runs, not by tests.
 - The limit-raise path has never had a real hardware signature through it — the offer and the API
   are verified, the last mile is not.
 - Testnet only, and pinned there by a boot assertion on the chain identifier.

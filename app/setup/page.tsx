@@ -83,6 +83,10 @@ export default function Setup() {
       <Step n={2} title="Fund the spending address" done={Number(state.spending_balance_sui) > 0}>
         {state.spending_address ? (
           <div className="flex flex-col gap-3">
+            <div className="setup-allocation" aria-label="Current wallet allocation">
+              <span>CURRENT WALLET ALLOCATION</span>
+              <strong>{state.spending_balance_sui} SUI spending · {state.protected_balance_sui} SUI protected</strong>
+            </div>
             <Address label="Spending · 1-of-2" hint="Your agent spends from here on its own, under the limits you set next."
               address={state.spending_address} balance={state.spending_balance_sui} primary />
             <Address label="Protected · 2-of-2" hint="Everything else. Moving anything out of here needs your Ledger."

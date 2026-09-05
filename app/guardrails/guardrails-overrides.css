@@ -6,9 +6,18 @@ html:has(.guardrails-page){scroll-behavior:smooth}
 @keyframes guardrails-fade-up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 body:has(.guardrails-page) .guardrails-hero{animation:guardrails-fade-up .55s ease both}
 body:has(.guardrails-page) .guardrails-status,body:has(.guardrails-page) .guardrails-panel,body:has(.guardrails-page) .guardrails-summary{animation:guardrails-fade-up .5s .1s ease both}
+body:has(.guardrails-page) .guardrails-wallet-balances{animation:guardrails-fade-up .5s .14s ease both}
 body:has(.guardrails-page) .guardrails-panel{transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}
 body:has(.guardrails-page) .guardrails-panel:hover{transform:translateY(-3px);border-color:rgba(231,251,54,.55);box-shadow:0 20px 36px rgba(0,0,0,.2)}
 body:has(.guardrails-page) button{transition:transform .18s ease,filter .18s ease,box-shadow .18s ease}
 body:has(.guardrails-page) button:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.08)}
 body:has(.guardrails-page) button:active:not(:disabled){transform:translateY(0) scale(.98)}
+body:has(.guardrails-page) .guardrails-wallet-balances{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+body:has(.guardrails-page) .guardrails-wallet-balance{display:flex;flex-direction:column;gap:4px;padding:15px 20px;border:1px solid rgba(231,251,54,.45);border-radius:14px;background:#111315}
+body:has(.guardrails-page) .guardrails-wallet-balance--protected{border-color:rgba(255,101,68,.65)}
+body:has(.guardrails-page) .guardrails-wallet-balance span{font-size:10px;font-weight:900;letter-spacing:.1em;color:rgba(255,249,223,.65)}
+body:has(.guardrails-page) .guardrails-wallet-balance strong{font-family:Impact,Haettenschweiler,"Arial Narrow Bold",sans-serif;font-size:34px;font-weight:400;line-height:1;color:var(--lime)}
+body:has(.guardrails-page) .guardrails-wallet-balance--protected strong{color:#ff7659}
+body:has(.guardrails-page) .guardrails-wallet-balance small{font-family:monospace;font-size:10px;color:rgba(255,249,223,.48)}
 @media(prefers-reduced-motion:reduce){body:has(.guardrails-page) *{animation:none!important;transition:none!important}}
+@media(max-width:700px){body:has(.guardrails-page) .guardrails-wallet-balances{grid-template-columns:1fr}}

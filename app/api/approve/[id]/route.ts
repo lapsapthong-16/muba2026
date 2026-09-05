@@ -7,7 +7,6 @@ import { describe } from '@/lib/describe'
 import { PolicySchema, evaluate, type Policy } from '@/lib/policy/policy'
 import { spentLast7d } from '@/lib/db'
 import { SUI_DECIMALS } from '@/lib/sui'
-import { requestConsensus } from '@/lib/ballot'
 
 /**
  * IN-BAND ADJUSTMENT — the best idea in MetaMask's docs, and the fix for our worst moment.
@@ -301,12 +300,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       { status: 500 }
     )
   }
-
-  // The bytes are fixed, but their simulated effects can change with live chain state. Re-run and
-  // retain the model review for the effects being executed. A held payment is already behind the
-  // Ledger gate, so a high-risk fresh review explains the tap; it does not void it on its own.
-  const freshConsensus = await requestConsensus(fresh.evidence, row.sender, row.intent)
-  getDb().prepare('UPDATE decisions SET ballot_json=? WHERE id=?').run(JSON.stringify(freshConsensus), id)
 
   const frozen = {
     bytes,

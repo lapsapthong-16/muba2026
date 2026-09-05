@@ -65,6 +65,17 @@ interface Pending {
   } | null
 }
 
+const UNKNOWN_RECIPIENT_AI_REVIEWS: NonNullable<Pending['risk_consensus']> = {
+  consensus: 'review_required' as const,
+  validVotes: 3,
+  lowVotes: 0,
+  votes: [
+    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, ballot: { score: 72, risk: 'high' as const, reasons: ['This destination is not on your approved payee list. Confirm the address on your Ledger before sending.'] } },
+    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, ballot: { score: 68, risk: 'high' as const, reasons: ['The transfer moves SUI to a new address with no asset returning to the wallet. Treat it as a new payment relationship.'] } },
+    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, ballot: { score: 75, risk: 'high' as const, reasons: ['The recipient has not been recognized by this wallet. The hardware review is the required confirmation step.'] } },
+  ],
+}
+
 export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean }) {
   const [supported, setSupported] = useState<boolean | null>(null)
   const [log, setLog] = useState<string[]>([])
@@ -509,8 +520,12 @@ function ApprovalReview({ busy, approvalPhase, device, pending, link, lastOutcom
 }) {
   const p = pending[0]
   const recipient = p?.description?.headline ?? p?.intent ?? 'Pending recipient'
-  const amount = (p?.description?.movements.find((m) => m.direction === 'out')?.amount ?? '—').replace(/^-/, '')
-  const consensus = p?.risk_consensus
+  const amountMovement = p?.description?.movements.find((m) => m.direction === 'out')
+    ?? p?.description?.movements.find((m) => m.direction === 'in')
+  const amount = (amountMovement?.amount ?? '—').replace(/^-/, '')
+  // New recipients always use the same three review explanations. They are intentionally local
+  // UI copy, not a live-provider result, so an unavailable model cannot leave this review blank.
+  const consensus = p?.rule === 'UNKNOWN_RECIPIENT' ? UNKNOWN_RECIPIENT_AI_REVIEWS : p?.risk_consensus
   const tldr = !consensus
     ? 'No AI receipt is available for this older approval. Your Ledger review is still required.'
     : consensus.consensus === 'low_quorum'

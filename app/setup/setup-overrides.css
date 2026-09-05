@@ -10,4 +10,8 @@ body:has(.setup-page) .setup-step:hover{transform:translateY(-3px);border-color:
 body:has(.setup-page) button{transition:transform .18s ease,filter .18s ease,box-shadow .18s ease}
 body:has(.setup-page) button:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.08)}
 body:has(.setup-page) button:active:not(:disabled){transform:translateY(0) scale(.98)}
+body:has(.setup-page) .setup-allocation{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border:1px solid rgba(231,251,54,.45);border-radius:10px;background:#111315;font-family:"Google Sans Flex",sans-serif}
+body:has(.setup-page) .setup-allocation span{font-size:10px;font-weight:900;letter-spacing:.1em;color:rgba(255,249,223,.62)}
+body:has(.setup-page) .setup-allocation strong{font-size:13px;color:var(--lime)}
 @media(prefers-reduced-motion:reduce){body:has(.setup-page) *{animation:none!important;transition:none!important}}
+@media(max-width:600px){body:has(.setup-page) .setup-allocation{align-items:flex-start;flex-direction:column;gap:5px}}

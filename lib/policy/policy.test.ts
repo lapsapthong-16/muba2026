@@ -43,7 +43,8 @@ const drain: Evidence = {
   simulationOk: true,
 }
 console.log('\n--- DEMO 2: drain ---')
-console.log(JSON.stringify(evaluate(policy, drain, () => 0n), null, 2))
+const drainVerdict = evaluate(policy, drain, () => 0n)
+console.log(JSON.stringify(drainVerdict, null, 2))
 
 // EDGE — weekly cap already 48 SUI spent, small 3 SUI transfer to a known friend
 console.log('\n--- EDGE: weekly cap exhausted ---')
@@ -52,6 +53,10 @@ const small: Evidence = { ...drain, balanceChanges: [
   { coinType: '0x2::sui::SUI', address: ATTACKER, amount: '3000000000' },
 ]}
 console.log(JSON.stringify(evaluate(policy, small, () => 48_000_000_000n).reasons, null, 2))
+if (!evaluate(policy, small, () => 0n).consultGonka) {
+  console.log('\nFAILING: Ledger-review transfers must request Gonka consensus')
+  process.exit(1)
+}
 
 // EDGE — receiving an unconfigured coin must NOT deny; spending one must.
 console.log('\n--- EDGE: unconfigured coin ---')

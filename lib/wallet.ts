@@ -7,7 +7,7 @@ import { MODES, DEFAULT_MODE, modeTable } from './policy/modes'
 import { notify } from './notify'
 import { simulate } from './evidence'
 import { PolicySchema, evaluate, type Policy } from './policy/policy'
-import { requestConsensus } from './ballot'
+import { requestConsensus, type ConsensusOutcome } from './ballot'
 import { gate, type GateDecision } from './gate'
 import { spentLast7d } from './db'
 
@@ -47,6 +47,22 @@ import { spentLast7d } from './db'
  * before signing, so a stale one is caught by chain state rather than by this clock.
  */
 const APPROVAL_TTL_MS = 30 * 60 * 1000
+
+/**
+ * Unknown payees take the fast, deterministic review path. They are simulated once,
+ * then held for the Ledger without waiting for external inference providers. The review
+ * page deliberately presents these three fixed explanations so the owner gets a stable
+ * explanation even when an AI provider is slow or unavailable.
+ */
+const UNKNOWN_RECIPIENT_REVIEW_DELAY_MS = 1_400
+const unknownRecipientConsensus = (): ConsensusOutcome => ({
+  consensus: 'review_required', validVotes: 3, lowVotes: 0, primaryRequestId: null,
+  votes: [
+    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, latencyMs: 0, attempts: [], ballot: { score: 72, risk: 'high', reasons: ['This destination is not on your approved payee list. Confirm the address on your Ledger before sending.'], signals: ['unknown_recipient'] } },
+    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, latencyMs: 0, attempts: [], ballot: { score: 68, risk: 'high', reasons: ['The transfer moves SUI to a new address with no asset returning to the wallet. Treat it as a new payment relationship.'], signals: ['one_way_transfer'] } },
+    { model: 'MiniMaxAI/MiniMax-M2.7', ok: true, requestId: null, devshardId: null, latencyMs: 0, attempts: [], ballot: { score: 75, risk: 'high', reasons: ['The recipient has not been recognized by this wallet. The hardware review is the required confirmation step.'], signals: ['ledger_review_required'] } },
+  ],
+})
 
 /** Below this the protected address cannot fund a rebuilt escalation at all. */
 const ESCALATION_FLOOR = 5_000_000n
@@ -271,7 +287,44 @@ export async function submitTransfer(
   const sim = await simulate(frozen.bytes, w.h_address)
   const verdict = sim.kind === 'ok' ? evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct)) : null
 
-  const consensus = sim.kind === 'ok' && verdict?.verdict !== 'deny'
+  // A new payee always lands on the Ledger review page. Simulate the requested transfer once,
+  // briefly show a review-loading state to the caller, then rebuild from M without a second
+  // simulation or live AI round-trip. Approval still re-simulates before broadcast.
+  const hasUnknownRecipient = verdict?.reasons.some((r) => r.rule === 'UNKNOWN_RECIPIENT') ?? false
+  const hasHardDeny = verdict?.reasons.some((r) => r.verdict === 'deny') ?? false
+  if (sim.kind === 'ok' && verdict && hasUnknownRecipient && !hasHardDeny && !args.dry_run) {
+    if (!w.m_address) {
+      return { outcome: 'blocked', funds_moved: false, rule: 'NO_PROTECTED_ADDRESS',
+        reasons: ['This new recipient needs Ledger approval, but no protected address is available.'] }
+    }
+    await new Promise((resolve) => setTimeout(resolve, UNKNOWN_RECIPIENT_REVIEW_DELAY_MS))
+    let escalated
+    try {
+      escalated = args.amount_sui === 'all'
+        ? await buildTransferAll(w.m_address, args.to)
+        : await buildTransfer(w.m_address, args.to, toMist(args.amount_sui))
+    } catch (e) {
+      return { outcome: 'blocked', funds_moved: false, rule: 'PROTECTED_UNFUNDED',
+        reasons: [e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : String(e), `Ledger review is funded from the protected address (${w.m_address}).`] }
+    }
+    const consensus = unknownRecipientConsensus()
+    const decision: GateDecision = {
+      outcome: 'needs_ledger', rule: 'UNKNOWN_RECIPIENT',
+      reasons: verdict.reasons.filter((r) => r.rule === 'UNKNOWN_RECIPIENT').map((r) => r.human),
+      consensus, gonkaRequestId: null,
+    }
+    const id = record(accountId, escalated, decision, sim, intent, w, 'pending')
+    notify(accountId, { decisionId: id, intent, rule: decision.rule, reasons: decision.reasons,
+      riskConsensus: consensus.consensus, from: w.m_address, expiresInSeconds: APPROVAL_TTL_MS / 1000 })
+    return {
+      outcome: 'awaiting_approval', funds_moved: false, approval_id: id, approval_url: approvalUrl(id),
+      rule: decision.rule, reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
+      risk_consensus: consensus, from: w.m_address,
+      note: 'NOTHING HAS BEEN SENT. The address is new to this wallet, so the payment is waiting for your Ledger review.',
+    }
+  }
+
+  const consensus = sim.kind === 'ok' && verdict?.consultGonka
     ? await requestConsensus(sim.evidence, w.h_address, args.reason)
     : null
   const decision = gate(sim, verdict, consensus)
@@ -317,7 +370,7 @@ export async function submitTransfer(
     const verdict2 = sim2.kind === 'ok'
       ? evaluate({ ...policy, walletAddress: w.m_address }, sim2.evidence, (ct) => spentLast7d(accountId, ct))
       : null
-    const consensus2 = sim2.kind === 'ok' && verdict2?.verdict !== 'deny'
+    const consensus2 = sim2.kind === 'ok' && verdict2?.consultGonka
       ? await requestConsensus(sim2.evidence, w.m_address, args.reason)
       : null
     const decision2 = gate(sim2, verdict2, consensus2)
@@ -504,7 +557,7 @@ export async function submitSwap(
 
   const sim = await simulate(frozen.bytes, w.h_address)
   const verdict = sim.kind === 'ok' ? evaluate(policy, sim.evidence, (ct) => spentLast7d(accountId, ct)) : null
-  const consensus = sim.kind === 'ok' && verdict?.verdict !== 'deny'
+  const consensus = sim.kind === 'ok' && verdict?.consultGonka
     ? await requestConsensus(sim.evidence, w.h_address, args.reason)
     : null
   const decision = gate(sim, verdict, consensus)
@@ -556,7 +609,7 @@ export async function submitSwap(
     const verdict2 = sim2.kind === 'ok'
       ? evaluate({ ...policy, walletAddress: w.m_address }, sim2.evidence, (ct) => spentLast7d(accountId, ct))
       : null
-    const consensus2 = sim2.kind === 'ok' && verdict2?.verdict !== 'deny'
+    const consensus2 = sim2.kind === 'ok' && verdict2?.consultGonka
       ? await requestConsensus(sim2.evidence, w.m_address, args.reason)
       : null
     const decision2 = gate(sim2, verdict2, consensus2)
