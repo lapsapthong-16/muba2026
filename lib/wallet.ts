@@ -80,6 +80,7 @@ function loadPolicy(w: WalletRow): Policy | null {
 
 const toMist = (sui: number) => BigInt(Math.round(sui * 10 ** SUI_DECIMALS))
 const fmtSui = (mist: bigint) => (Number(mist) / 10 ** SUI_DECIMALS).toFixed(4).replace(/\.?0+$/, '')
+const approvalUrl = (id: string) => `${(process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '')}/review?approval=${id}`
 
 /**
  * Wait for a human to finish setting the wallet up.
@@ -339,6 +340,7 @@ export async function submitTransfer(
     })
     return {
       outcome: 'awaiting_approval', funds_moved: false, approval_id: id, rule: decision.rule,
+      approval_url: approvalUrl(id),
       reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
       risk: decision2.ballotRisk, risk_score: decision2.ballotScore, risk_reasons: decision2.ballotReasons,
       gonka_request_id: decision2.gonkaRequestId,
@@ -575,6 +577,7 @@ export async function submitSwap(
     })
     return {
       outcome: 'awaiting_approval', funds_moved: false, approval_id: id,
+      approval_url: approvalUrl(id),
       rule: decision.rule, reasons: decision.reasons, expires_in_seconds: APPROVAL_TTL_MS / 1000,
       quote: { pool, in_sui: args.amount_sui, expected_out: quote.quoteOut, min_out: minOut },
       risk: decision2.ballotRisk, risk_score: decision2.ballotScore,

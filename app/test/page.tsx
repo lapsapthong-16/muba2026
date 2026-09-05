@@ -63,7 +63,7 @@ interface Pending {
   } | null
 }
 
-export default function TestPage() {
+export default function TestPage({ reviewOnly = false }: { reviewOnly?: boolean }) {
   const [supported, setSupported] = useState<boolean | null>(null)
   const [log, setLog] = useState<string[]>([])
   const [device, setDevice] = useState<{ address: string; version: string } | null>(null)
@@ -72,6 +72,7 @@ export default function TestPage() {
   const [expiredCount, setExpiredCount] = useState(0)
   const [link, setLink] = useState<Link>('usb')
   const [refundBusy, setRefundBusy] = useState(false)
+  const [lastOutcome, setLastOutcome] = useState<string | null>(null)
 
   const say = (s: string) => setLog((l) => [...l, s])
 
@@ -213,6 +214,7 @@ export default function TestPage() {
       const body = await r.json()
       if (!r.ok) throw new Error(body.error ?? `Server returned ${r.status}`)
       say(`EXECUTED. digest ${body.digest}`)
+      setLastOutcome(`Approved and executed. ${body.digest ? `Transaction: ${body.digest}` : ''}`)
       for (const line of (body.guardrails_updated ?? []) as string[]) say(line)
       say(body.explorer)
       await refresh()
@@ -228,11 +230,13 @@ export default function TestPage() {
   }
 
   async function decline(p: Pending) {
-    await fetch(`/api/approve/${p.id}`, {
+    const r = await fetch(`/api/approve/${p.id}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'decline' }),
     })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Could not decline this approval.')
+    setLastOutcome('Declined. Nothing was sent.')
     say('Declined. Nothing was sent.')
     await refresh()
   }
@@ -251,7 +255,7 @@ export default function TestPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12 font-sans">
-      <h1 className="text-2xl font-semibold tracking-tight">Ledger test bench</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{reviewOnly ? 'Ledger approvals' : 'Ledger test bench'}</h1>
       <p className="mt-2 text-sm text-zinc-600">
         Quit Ledger Live first — it holds an exclusive USB claim and the browser cannot take the
         device while it is running. Unlock the device and open the Sui app.
@@ -263,13 +267,13 @@ export default function TestPage() {
         </p>
       )}
 
-      {!!env.length && (
+      {!reviewOnly && !!env.length && (
         <pre className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-700">
 {env.join('\n')}
         </pre>
       )}
 
-      <section className="mt-8">
+      {!reviewOnly && <section className="mt-8">
         <div className="mb-8 rounded-lg border border-amber-200 bg-amber-50 p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-900">Protected-funds recovery</h2>
           <p className="mt-1 text-sm text-amber-800">Create a Ledger approval to return the protected pocket to the configured REFUND address.</p>
@@ -302,11 +306,26 @@ export default function TestPage() {
             <dt className="text-zinc-500">path</dt><dd>{LEDGER_PATH}</dd>
           </dl>
         )}
-      </section>
+      </section>}
 
-      <section className="mt-10">
+      {reviewOnly && <section className="mt-8">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Connect Ledger</h2>
+        <div className="mb-3 flex gap-2 text-sm">
+          {(['usb', 'ble'] as Link[]).map((l) => (
+            <button key={l} onClick={() => setLink(l)} className={`rounded-full border px-3 py-1 ${link === l ? 'border-black bg-black text-white' : 'border-zinc-300'}`}>
+              {l === 'usb' ? 'USB cable' : 'Bluetooth'}
+            </button>
+          ))}
+        </div>
+        <button onClick={checkDevice} disabled={busy || (link === 'usb' && supported === false)} className="rounded-full bg-black px-5 py-2 text-sm font-medium text-white disabled:opacity-40">
+          {busy ? 'Working…' : 'Connect Ledger'}
+        </button>
+        {device && <p className="mt-2 font-mono text-xs text-zinc-500">Connected: {device.address}</p>}
+      </section>}
+
+      <section className={reviewOnly ? 'mt-8' : 'mt-10'}>
         <h2 className="mb-2 flex items-center gap-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-          2 · Pending approvals
+          {reviewOnly ? 'Pending approvals' : '2 · Pending approvals'}
           <button onClick={refresh} className="rounded border border-zinc-300 px-2 py-0.5 text-xs normal-case tracking-normal">
             refresh
           </button>
@@ -324,6 +343,7 @@ export default function TestPage() {
             )}
           </div>
         )}
+        {lastOutcome && <p className="mb-3 rounded-md bg-emerald-50 p-3 text-sm text-emerald-900">{lastOutcome}</p>}
         {pending.map((p) => (
           <div key={p.id} className="mb-3 rounded-lg border border-amber-300 bg-amber-50/50 p-4">
             <p className="text-base font-semibold">{p.description?.headline ?? p.intent}</p>
